@@ -16,14 +16,14 @@ Conduit is a Model Context Protocol (MCP) server that exposes an administrator-s
 Run the published server with `uvx`:
 
 ```bash
-uvx --from git+https://github.com/mcpnow-io/conduit conduit-mcp --print-tools-config-path
+uvx --from git+https://github.com/penalara/phorge-conduit-allowed-tools conduit-mcp --print-tools-config-path
 ```
 
 Install from source for development:
 
 ```bash
-git clone https://github.com/mcpnow-io/conduit.git
-cd conduit
+git clone https://github.com/penalara/phorge-conduit-allowed-tools.git
+cd phorge-conduit-allowed-tools
 python -m venv venv
 ```
 
@@ -207,14 +207,14 @@ pre-commit run -a
 Ejecuta el servidor publicado con `uvx`:
 
 ```bash
-uvx --from git+https://github.com/mcpnow-io/conduit conduit-mcp --print-tools-config-path
+uvx --from git+https://github.com/penalara/phorge-conduit-allowed-tools conduit-mcp --print-tools-config-path
 ```
 
 Instalacion desde el codigo fuente para desarrollo:
 
 ```bash
-git clone https://github.com/mcpnow-io/conduit.git
-cd conduit
+git clone https://github.com/penalara/phorge-conduit-allowed-tools.git
+cd phorge-conduit-allowed-tools
 python -m venv venv
 ```
 

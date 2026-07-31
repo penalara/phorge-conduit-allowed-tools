@@ -193,7 +193,7 @@ Run formatting and local checks with:
 pre-commit run -a
 ```
 
-## Documentacion En Espanol
+## Documentacion en Castellano
 
 ### Requisitos
 

@@ -55,6 +55,9 @@ class BasePhabricatorClient(ABC):
         """
         if params is None:
             params = {}
+        else:
+            # Callers may reuse parameter objects across requests.
+            params = dict(params)
 
         params["api.token"] = self.api_token
 

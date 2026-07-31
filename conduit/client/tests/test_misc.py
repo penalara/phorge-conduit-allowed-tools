@@ -2,6 +2,8 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from conduit.client.misc import (
     ConduitClient,
     HarbormasterClient,
@@ -59,6 +61,26 @@ class TestConduitClient:
 
         mock_request.assert_called_once_with("conduit.query")
         assert "result" in result
+
+    @patch("conduit.client.base.BasePhabricatorClient._make_request")
+    def test_call_method_flattens_nested_parameters(self, mock_request):
+        """Generic calls use Conduit's expected nested form field format."""
+        mock_request.return_value = {"data": []}
+
+        self.client.call_method(
+            "phriction.document.search",
+            {"constraints": {"paths": ["/example/"]}, "limit": 10},
+        )
+
+        mock_request.assert_called_once_with(
+            "phriction.document.search",
+            {"constraints[paths][0]": "/example/", "limit": 10},
+        )
+
+    def test_call_method_rejects_reserved_parameters(self):
+        """Authentication and transport parameters cannot be supplied by tools."""
+        with pytest.raises(ValueError):
+            self.client.call_method("conduit.ping", {"api.token": "override"})
 
     @patch("conduit.client.base.BasePhabricatorClient._make_request")
     def test_connect(self, mock_request):

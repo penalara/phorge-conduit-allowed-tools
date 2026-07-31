@@ -1,9 +1,41 @@
 from typing import Any, Dict, List
 
+from conduit.utils import flatten_params
+
 from conduit.client.base import BasePhabricatorClient
 
 
 class ConduitClient(BasePhabricatorClient):
+    _RESERVED_PARAMETER_NAMES = {
+        "params",
+        "output",
+        "access_token",
+        "scope",
+        "code",
+        "__conduit__",
+    }
+
+    def call_method(self, method: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Call a fixed, administrator-allowed Conduit method safely."""
+        if not isinstance(method, str) or not method:
+            raise ValueError("A valid Conduit method name is required")
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            raise ValueError("Conduit parameters must be an object")
+
+        for key in params:
+            if not isinstance(key, str):
+                raise ValueError("Conduit parameter names must be strings")
+            if key.startswith("api.") or key in self._RESERVED_PARAMETER_NAMES:
+                raise ValueError(
+                    "Reserved Conduit parameter is not allowed: {}".format(key)
+                )
+
+        # Conduit expects nested structures in PHP-style form fields.
+        flattened_params = dict(flatten_params(params))
+        return self._make_request(method, flattened_params)
+
     def ping(self) -> Dict[str, Any]:
         """
         Basic ping for monitoring or health check.

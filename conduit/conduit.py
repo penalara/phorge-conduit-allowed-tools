@@ -1,11 +1,19 @@
 import argparse
 import os
+import sys
 
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 
+from conduit.allowed_methods import (
+    CONFIG_ENV_VAR,
+    load_allowed_methods,
+    methods_from_conduit_query,
+    register_allowed_methods,
+    resolve_config_path,
+    write_allowed_methods,
+)
 from conduit.client import PhabricatorClient
-from conduit.main_tools import register_tools
 
 
 class PhabricatorConfig(object):
@@ -88,13 +96,28 @@ class ConduitApp:
         )
         return self._client
 
-    def register_tools(self):
-        """Register all MCP tools."""
-        register_tools(self.mcp, self.get_client)
+    def call_method(self, method, params):
+        """Invoke one registered method and release request-scoped SSE clients."""
+        client = self.get_client()
+        try:
+            return client.conduit.call_method(method, params)
+        finally:
+            if self.use_sse:
+                client.close()
+
+    def register_tools(self, allowed_methods):
+        """Register only administrator-allowed Conduit methods."""
+        register_allowed_methods(self.mcp, allowed_methods, self.call_method)
+
+    def close(self):
+        """Close the persistent stdio client, if one was created."""
+        if self._client is not None:
+            self._client.close()
+            self._client = None
 
     def run_sse_mode(self, host: str, port: int):
         """Run the application in SSE mode."""
-        print(f"Starting in HTTP/SSE mode on {host}:{port}")
+        print(f"Starting in HTTP/SSE mode on {host}:{port}", file=sys.stderr)
         self.mcp.run(
             transport="sse",
             host=host,
@@ -104,7 +127,7 @@ class ConduitApp:
 
     def run_stdio_mode(self):
         """Run the application in stdio mode."""
-        print("Starting in stdio mode")
+        print("Starting in stdio mode", file=sys.stderr)
         self.mcp.run(transport="stdio")
 
 
@@ -114,23 +137,28 @@ _app = None
 
 def print_server_info(config):
     """Print server configuration information."""
-    print("Starting Conduit MCP Server...")
-    print(f"Phabricator URL: {config.url}")
-    print(f"Token configured: {'Yes' if config.token else 'No'}")
-    print(f"Proxy configured: {'Yes' if config.proxy else 'No'}")
-    if config.proxy:
-        print(f"Proxy URL: {config.proxy}")
+    print("Starting Conduit MCP Server...", file=sys.stderr)
+    print(f"Phabricator URL: {config.url}", file=sys.stderr)
+    print(f"Token configured: {'Yes' if config.token else 'No'}", file=sys.stderr)
+    print(f"Proxy configured: {'Yes' if config.proxy else 'No'}", file=sys.stderr)
     print(
-        f"SSL certificate verification: {'Disabled' if config.disable_cert_verify else 'Enabled'}"
+        f"SSL certificate verification: {'Disabled' if config.disable_cert_verify else 'Enabled'}",
+        file=sys.stderr,
     )
 
 
-def should_use_sse_transport() -> bool:
-    """Check if SSE transport should be used based on command line arguments."""
-    import sys
-
-    sse_args = ["--host", "-H", "--port", "-p"]
-    return any(arg in sys.argv for arg in sse_args)
+def _configuration_error(path, reason):
+    print("Conduit MCP configuration error: {}".format(reason), file=sys.stderr)
+    print("Configuration path: {}".format(path), file=sys.stderr)
+    print("Create it with: conduit-mcp --init-tools-config", file=sys.stderr)
+    print(
+        "Or select another file with --tools-config or {}.".format(CONFIG_ENV_VAR),
+        file=sys.stderr,
+    )
+    print(
+        'Expected JSON: {"allowed_tools": ["phriction.document.search"]}',
+        file=sys.stderr,
+    )
 
 
 def main():
@@ -141,41 +169,103 @@ def main():
     parser.add_argument(
         "--host",
         "-H",
-        default="127.0.0.1",
+        default=None,
         help="Host to bind to for SSE transport (default: 127.0.0.1)",
     )
     parser.add_argument(
         "--port",
         "-p",
         type=int,
-        default=8000,
+        default=None,
         help="Port to bind to for SSE transport (default: 8000)",
+    )
+    parser.add_argument(
+        "--tools-config",
+        help="Path to conduit-allowed-methods.json",
+    )
+    parser.add_argument(
+        "--print-tools-config-path",
+        action="store_true",
+        help="Print the effective tools configuration path and exit",
+    )
+    parser.add_argument(
+        "--init-tools-config",
+        action="store_true",
+        help="Create the tools configuration from conduit.query and exit",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing configuration when initializing",
     )
 
     args = parser.parse_args()
+    config_path = resolve_config_path(args.tools_config)
 
-    use_sse = should_use_sse_transport()
+    if args.print_tools_config_path:
+        print(str(config_path))
+        return 0
 
-    if use_sse:
-        config = PhabricatorConfig(require_token=False)
-        print_server_info(config)
+    if args.force and not args.init_tools_config:
+        parser.error("--force can only be used with --init-tools-config")
 
+    if args.init_tools_config:
+        try:
+            config = PhabricatorConfig(require_token=True)
+            client = PhabricatorClient(
+                config.url,
+                config.token,
+                proxy=config.proxy,
+                disable_cert_verify=config.disable_cert_verify,
+            )
+            try:
+                methods = methods_from_conduit_query(client.conduit.query_methods())
+            finally:
+                client.close()
+            write_allowed_methods(config_path, methods, force=args.force)
+        except Exception as error:
+            print(
+                "Unable to initialize {}: {}".format(config_path, error),
+                file=sys.stderr,
+            )
+            return 2
         print(
-            "Note: In HTTP/SSE mode, PHABRICATOR_TOKEN should be provided via HTTP headers:"
+            "Wrote {} visible Conduit methods to {}".format(len(methods), config_path),
+            file=sys.stderr,
         )
-        print("  - X-PHABRICATOR-TOKEN: <token>")
-    else:
-        config = PhabricatorConfig(require_token=True)
-        print_server_info(config)
+        return 0
+
+    use_sse = args.host is not None or args.port is not None
+
+    try:
+        allowed_methods = load_allowed_methods(config_path)
+    except Exception as error:
+        _configuration_error(config_path, str(error))
+        return 2
+    try:
+        config = PhabricatorConfig(require_token=not use_sse)
+    except Exception as error:
+        print("Conduit MCP startup error: {}".format(error), file=sys.stderr)
+        return 2
+
+    print_server_info(config)
+    if use_sse:
+        print(
+            "In HTTP/SSE mode provide X-PHABRICATOR-TOKEN per request.", file=sys.stderr
+        )
 
     # Create and run the application
     app = ConduitApp(config, use_sse)
-    app.register_tools()
+    app.register_tools(allowed_methods)
 
-    if use_sse:
-        app.run_sse_mode(args.host, args.port)
-    else:
-        app.run_stdio_mode()
+    try:
+        if use_sse:
+            app.run_sse_mode(args.host or "127.0.0.1", args.port or 8000)
+        else:
+            app.run_stdio_mode()
+    finally:
+        app.close()
+    return 0
 
 
 # Backward compatibility functions

@@ -57,6 +57,7 @@ class ConduitApp:
         self.use_sse = use_sse
         self.mcp = FastMCP("Conduit")
         self._client = None
+        self._allowed_methods = None
 
     def get_client(self):
         """Get or create a Phabricator client instance."""
@@ -74,12 +75,14 @@ class ConduitApp:
                     "PHABRICATOR_TOKEN from HTTP header must be exactly 32 characters long"
                 )
 
-            return PhabricatorClient(
+            client = PhabricatorClient(
                 self.config.url,
                 http_token,
                 proxy=self.config.proxy,
                 disable_cert_verify=self.config.disable_cert_verify,
             )
+            client.set_allowed_methods(self._allowed_methods)
+            return client
 
         # For stdio mode, use cached client (backward compatibility)
         if self._client is not None:
@@ -94,6 +97,7 @@ class ConduitApp:
             proxy=self.config.proxy,
             disable_cert_verify=self.config.disable_cert_verify,
         )
+        self._client.set_allowed_methods(self._allowed_methods)
         return self._client
 
     def call_method(self, method, params):
@@ -106,8 +110,14 @@ class ConduitApp:
                 client.close()
 
     def register_tools(self, allowed_methods):
-        """Register only administrator-allowed Conduit methods."""
+        """Register raw and typed tools under one Conduit method allowlist."""
+        self._allowed_methods = tuple(allowed_methods)
+        if self._client is not None:
+            self._client.set_allowed_methods(self._allowed_methods)
         register_allowed_methods(self.mcp, allowed_methods, self.call_method)
+        from conduit.main_tools import register_tools as register_typed_tools
+
+        register_typed_tools(self.mcp, self.get_client)
 
     def close(self):
         """Close the persistent stdio client, if one was created."""

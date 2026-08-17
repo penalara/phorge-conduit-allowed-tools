@@ -2,7 +2,7 @@ import hashlib
 import json
 import time
 from functools import wraps
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 import httpx
 from httpx import Limits, Timeout
@@ -427,6 +427,26 @@ class PhabricatorClient(object):
         """Clear cache if caching is enabled."""
         if hasattr(self, "_enhanced_client"):
             self._enhanced_client.clear_cache()
+
+    def set_allowed_methods(self, methods: Optional[Iterable[str]]) -> None:
+        """Apply a Conduit method allowlist to every specialized client."""
+        for client in (
+            self.maniphest,
+            self.differential,
+            self.diffusion,
+            self.project,
+            self.user,
+            self.file,
+            self.conduit,
+            self.harbormaster,
+            self.paste,
+            self.phriction,
+            self.remarkup,
+            self.macro,
+            self.flag,
+            self.phid,
+        ):
+            client.set_allowed_methods(methods)
 
     def close(self):
         if self.http_client:

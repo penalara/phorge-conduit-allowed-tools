@@ -354,19 +354,26 @@ class ManiphestClient(BasePhabricatorClient):
 
     @staticmethod
     def create_column_transaction(
-        column_phid: PHID,
+        column_phid: Union[PHID, List[PHID]],
         before_phid: Optional[PHID] = None,
         after_phid: Optional[PHID] = None,
     ) -> ManiphestTaskTransaction:
         """
         Create a transaction to move task to a workboard column.
 
-        The Phabricator API expects a list of column PHIDs for simple moves. When
-        positioning hints are provided, it accepts a list containing a single map
-        with optional `beforePHID`/`afterPHID` keys.
+        The Phabricator API expects a list of column PHIDs for simple moves. A
+        single PHID or a list of PHIDs is accepted. When positioning hints are
+        provided, it accepts a list containing a single map with optional
+        `beforePHID`/`afterPHID` keys.
         """
         if not before_phid and not after_phid:
-            return {"type": "column", "value": [column_phid]}
+            column_phids = (
+                [column_phid] if isinstance(column_phid, str) else column_phid
+            )
+            return {"type": "column", "value": column_phids}
+
+        if not isinstance(column_phid, str):
+            raise ValueError("Positioning hints require exactly one column PHID")
 
         column_position: Dict[str, PHID] = {"columnPHID": column_phid}
 

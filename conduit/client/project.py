@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from conduit.client.base import BasePhabricatorClient
 from conduit.utils import build_search_params, build_transaction_params
@@ -6,7 +6,11 @@ from conduit.utils import build_search_params, build_transaction_params
 
 class ProjectClient(BasePhabricatorClient):
     def search_projects(
-        self, constraints: Dict[str, Any] = None, limit: int = 100
+        self,
+        constraints: Dict[str, Any] = None,
+        before: Optional[str] = None,
+        after: Optional[str] = None,
+        limit: int = 100,
     ) -> Dict[str, Any]:
         """
         Search for projects.
@@ -20,6 +24,8 @@ class ProjectClient(BasePhabricatorClient):
         """
         params = build_search_params(
             constraints=constraints,
+            before=before,
+            after=after,
             limit=limit,
         )
         return self._make_request("project.search", params)
@@ -70,7 +76,11 @@ class ProjectClient(BasePhabricatorClient):
         return self.edit_project(transactions)
 
     def search_columns(
-        self, constraints: Dict[str, Any] = None, limit: int = 100
+        self,
+        constraints: Dict[str, Any] = None,
+        before: Optional[str] = None,
+        after: Optional[str] = None,
+        limit: int = 100,
     ) -> Dict[str, Any]:
         """
         Read information about workboard columns.
@@ -84,6 +94,8 @@ class ProjectClient(BasePhabricatorClient):
         """
         params = build_search_params(
             constraints=constraints,
+            before=before,
+            after=after,
             limit=limit,
         )
         return self._make_request("project.column.search", params)

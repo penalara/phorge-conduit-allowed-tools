@@ -1678,3 +1678,7 @@ def register_tools(  # noqa: C901
         result = _add_pagination_metadata(result, result.get("cursor"))
 
         return {"success": True, "tasks": result}
+
+    from conduit.tools.start_task_tools import register_start_task_tools
+
+    register_start_task_tools(mcp, get_client_func)

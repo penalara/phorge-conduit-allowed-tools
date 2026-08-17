@@ -1,7 +1,7 @@
 import json
 import urllib.parse
 from abc import ABC
-from typing import Any, Dict, Optional
+from typing import Any, Dict, FrozenSet, Iterable, Optional
 
 import httpx
 
@@ -35,9 +35,16 @@ class BasePhabricatorClient(ABC):
             )
         else:
             self.client = http_client
+        # None means this client is used outside the MCP allowlist boundary.
+        # An empty set is an intentional deny-all policy.
+        self._allowed_methods: Optional[FrozenSet[str]] = None
+
+    def set_allowed_methods(self, methods: Optional[Iterable[str]]) -> None:
+        """Restrict this client to the supplied Conduit methods."""
+        self._allowed_methods = None if methods is None else frozenset(methods)
 
     def _make_request(
-        self, method: str, params: Dict[str, Any] = None
+        self, method: str, params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Make a request to the Phabricator API.
@@ -53,6 +60,14 @@ class BasePhabricatorClient(ABC):
             PhabricatorAPIError: If the API returns an error
             httpx.HTTPError: If there's a network error
         """
+        if self._allowed_methods is not None and method not in self._allowed_methods:
+            raise PhabricatorAPIError(
+                "Conduit method '{}' is not in the allowed methods list".format(
+                    method
+                ),
+                error_code="METHOD_NOT_ALLOWED",
+            )
+
         if params is None:
             params = {}
         else:

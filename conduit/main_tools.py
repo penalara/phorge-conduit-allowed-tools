@@ -1680,5 +1680,7 @@ def register_tools(  # noqa: C901
         return {"success": True, "tasks": result}
 
     from conduit.tools.start_task_tools import register_start_task_tools
+    from conduit.tools.sprint_tools import register_sprint_tools
 
     register_start_task_tools(mcp, get_client_func)
+    register_sprint_tools(mcp, get_client_func)

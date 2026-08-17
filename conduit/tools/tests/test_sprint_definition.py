@@ -1,0 +1,255 @@
+"""Pure unit tests for sprint definition parsing and rendering."""
+
+from decimal import Decimal
+
+import pytest
+
+from conduit.tools.sprint_definition import (
+    SprintDefinition,
+    SprintProject,
+    SprintTaskRow,
+    normalize_slug,
+    parse_sprint_definition,
+    render_sprint_remarkup,
+)
+
+
+@pytest.mark.parametrize("header", ["#Sprint 17", "# Sprint 17"])
+def test_parses_supported_first_line_headers_and_ignores_later_blanks(header):
+    result = parse_sprint_definition(
+        "%s\n\nNew task;;@alice;;;\n   \nT42;;;;;" % header
+    )
+
+    assert result.is_valid
+    assert result.name == "Sprint 17"
+    assert result.slug == "sprint-17"
+    assert [row.title for row in result.rows] == ["New task", None]
+    assert result.rows[1].task_identifier == "T42"
+    assert [row.line_number for row in result.rows] == [3, 5]
+
+
+def test_header_must_be_the_first_physical_line():
+    result = parse_sprint_definition("\n# Sprint 17\nTask")
+
+    assert not result.is_valid
+    assert result.name is None
+    assert result.errors[0].line_number == 1
+    assert "First physical line" in result.errors[0].message
+
+
+def test_short_rows_are_padded_and_six_columns_are_parsed():
+    result = parse_sprint_definition(
+        "# Sprint Alfa\nCreate report;1.5h;@alice;High;"
+        "Core, Delivery[Doing];@bob, @carol"
+    )
+
+    row = result.rows[0]
+    assert result.is_valid
+    assert row.title == "Create report"
+    assert row.estimation == "1.5h"
+    assert row.estimation_hours == Decimal("1.5")
+    assert row.owner == "alice"
+    assert row.priority == "High"
+    assert row.subscribers == ["bob", "carol"]
+    assert row.projects == [
+        SprintProject("Core"),
+        SprintProject("Delivery", "Doing"),
+    ]
+
+
+def test_more_than_six_columns_is_reported_without_raising():
+    result = parse_sprint_definition("# Sprint 1\nTask;;@alice;;;;extra")
+
+    assert len(result.rows) == 1
+    assert any("more than six" in error.message for error in result.errors)
+
+
+@pytest.mark.parametrize("identifier", ["T0", "t123", "T123abc"])
+def test_rejects_task_like_values_that_are_not_exact_identifiers(identifier):
+    result = parse_sprint_definition("# Sprint 1\n%s;;@alice" % identifier)
+
+    assert result.rows[0].task_identifier is None
+    assert result.rows[0].title is None
+    assert "Malformed task identifier" in result.errors[0].message
+
+
+def test_non_task_like_text_is_a_new_title():
+    result = parse_sprint_definition("# Sprint 1\nTriage customer report;;@alice")
+
+    assert result.is_valid
+    assert result.rows[0].title == "Triage customer report"
+
+
+@pytest.mark.parametrize(
+    "source, original, hours",
+    [
+        ("2h", "2h", Decimal("2")),
+        ("0.25h", "0.25h", Decimal("0.25")),
+        ("1D", "1D", Decimal("8")),
+        ("1.5D", "1.5D", Decimal("12.0")),
+    ],
+)
+def test_estimation_preserves_source_and_converts_days(source, original, hours):
+    result = parse_sprint_definition("# Sprint 1\nTask;%s;@alice" % source)
+
+    assert result.is_valid
+    assert result.rows[0].estimation == original
+    assert result.rows[0].estimation_hours == hours
+
+
+@pytest.mark.parametrize("value", ["one h", "2", "h", ".5h", "1d"])
+def test_rejects_invalid_estimations(value):
+    result = parse_sprint_definition("# Sprint 1\nTask;%s;@alice" % value)
+
+    assert result.rows[0].estimation_hours is None
+    assert any("Estimation" in error.message for error in result.errors)
+
+
+def test_owner_subscribers_and_projects_collect_multiple_errors():
+    result = parse_sprint_definition(
+        "# Sprint 1\nTask;bad;alice;;Core,,Broken[],A[B][C];@ok, bad"
+    )
+
+    messages = [error.message for error in result.errors]
+    assert len(messages) == 6
+    assert result.rows[0].subscribers == ["ok"]
+    assert result.rows[0].projects == [SprintProject("Core")]
+    assert any("Owner" in message for message in messages)
+    assert any("Subscriber" in message for message in messages)
+    assert any("empty" in message for message in messages)
+
+
+def test_mixed_tabs_and_four_space_hierarchy_uses_nearest_parent():
+    result = parse_sprint_definition(
+        "# Sprint Tree\nRoot;;@a\n\tChild A;;@a\n        Grandchild;;@a\n    Child B;;@a\nRoot 2;;@a\n    Child C;;@a"
+    )
+
+    assert result.is_valid
+    assert [row.level for row in result.rows] == [0, 1, 2, 1, 0, 1]
+    assert [row.parent_row_index for row in result.rows] == [None, 0, 1, 0, None, 4]
+
+
+@pytest.mark.parametrize("indent", ["\t", "    "])
+def test_tab_and_four_spaces_each_create_one_hierarchy_level(indent):
+    result = parse_sprint_definition("# Sprint Tree\nRoot;;@a\n%sChild;;@a" % indent)
+
+    assert result.is_valid
+    assert result.rows[1].level == 1
+    assert result.rows[1].parent_row_index == 0
+
+
+@pytest.mark.parametrize(
+    "body, expected_message",
+    [
+        ("Root;;@a\n  Odd;;@a", "multiple of four"),
+        ("Root;;@a\n        Deep;;@a", "cannot jump"),
+        ("    Orphan;;@a", "has no level-0 parent"),
+    ],
+)
+def test_invalid_indentation_jump_and_missing_parent(body, expected_message):
+    result = parse_sprint_definition("# Sprint Tree\n" + body)
+
+    messages = [error.message for error in result.errors]
+    assert any(expected_message in message for message in messages)
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("Sprint Ágil Nº 17", "sprint-agil-no-17"),
+        ("  Déjà_vu / release  ", "deja-vu-release"),
+        ("España -- Málaga", "espana-malaga"),
+        ("***", ""),
+    ],
+)
+def test_slug_normalization(value, expected):
+    assert normalize_slug(value) == expected
+
+
+def test_api_resolved_fields_are_mutable():
+    row = parse_sprint_definition("# Sprint 1\nT9;;;;;").rows[0]
+
+    row.existing_title = "Resolved title"
+    row.final_owner_username = "resolved-owner"
+    row.final_task_identifier = "T10"
+
+    assert (
+        row.existing_title,
+        row.final_owner_username,
+        row.final_task_identifier,
+    ) == (
+        "Resolved title",
+        "resolved-owner",
+        "T10",
+    )
+
+
+def _render_row(
+    index, owner, identifier, title, status="Open", estimate="2h", actual="1h"
+):
+    return SprintTaskRow(
+        row_index=index,
+        line_number=index + 2,
+        level=0,
+        parent_row_index=None,
+        title=title,
+        task_identifier=None,
+        estimation=estimate,
+        estimation_hours=Decimal(estimate[:-1]),
+        owner=None,
+        priority=None,
+        final_owner_username=owner,
+        final_task_identifier=identifier,
+        status=status,
+        actual_time=actual,
+    )
+
+
+def test_render_groups_final_owners_in_first_appearance_order():
+    definition = SprintDefinition(
+        name="Sprint Secret",
+        slug="sprint-secret",
+        rows=[
+            _render_row(0, "bob", "T2", "Second"),
+            _render_row(1, "alice", "T1", "First"),
+            _render_row(2, "bob", "T3", "Third"),
+        ],
+    )
+
+    rendered = render_sprint_remarkup(definition)
+
+    assert rendered.index("== @bob ==") < rendered.index("== @alice ==")
+    assert rendered.index("T2") < rendered.index("T3") < rendered.index("@alice")
+    assert "Sprint Secret" not in rendered
+    assert rendered.count("<table>") == 2
+    assert "<th>Tarea</th><th>Título tarea</th><th>Estado</th>" in rendered
+    assert "<th>Estimación</th><th>Tiempo real</th>" in rendered
+
+
+def test_render_groups_by_owner_only_and_does_not_add_subscriber_section():
+    row = _render_row(0, "alice", "T1", "Task")
+    row.subscribers = ["bob"]
+    definition = SprintDefinition("Sprint 1", "sprint-1", [row])
+
+    rendered = render_sprint_remarkup(definition)
+
+    assert rendered.count("== @alice ==") == 1
+    assert "== @bob ==" not in rendered
+
+
+def test_render_escapes_all_dynamic_html_and_uses_resolved_title():
+    row = _render_row(0, "a&b", "T1<script>", "new <title>", status="A&B")
+    row.existing_title = "resolved <title>"
+    definition = SprintDefinition("Sprint 1", "sprint-1", [row])
+
+    rendered = render_sprint_remarkup(definition)
+
+    assert "@a&amp;b" in rendered
+    assert "T1&lt;script&gt;" in rendered
+    assert "resolved &lt;title&gt;" in rendered
+    assert "A&amp;B" in rendered
+    assert "<script>" not in rendered
+
+
+def test_render_empty_definition_is_empty():
+    assert render_sprint_remarkup(SprintDefinition("Sprint 1", "sprint-1")) == ""

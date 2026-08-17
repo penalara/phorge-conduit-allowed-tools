@@ -343,6 +343,25 @@ class TestPhrictionClient:
         )
 
     @patch("conduit.client.base.BasePhabricatorClient._make_request")
+    def test_search_documents_flattens_constraints_and_cursors(self, mock_request):
+        mock_request.return_value = {"data": [], "cursor": {"after": None}}
+
+        self.client.search_documents(
+            constraints={"paths": ["projects/sprint-1/"]},
+            after="next",
+            limit=25,
+        )
+
+        mock_request.assert_called_once_with(
+            "phriction.document.search",
+            {
+                "limit": 25,
+                "constraints[paths][0]": "projects/sprint-1/",
+                "after": "next",
+            },
+        )
+
+    @patch("conduit.client.base.BasePhabricatorClient._make_request")
     def test_search_content(self, mock_request):
         """Test searching content history."""
         mock_request.return_value = {

@@ -1,4 +1,39 @@
-from typing import Any
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+
+def page_data(
+    response: Any, operation: str
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Validate and unpack one cursor-based Conduit search page."""
+    if not isinstance(response, dict) or not isinstance(response.get("data"), list):
+        raise ValueError("{} returned an inconsistent response".format(operation))
+    cursor = response.get("cursor") or {}
+    if not isinstance(cursor, dict):
+        raise ValueError("{} returned an inconsistent cursor".format(operation))
+    after = cursor.get("after")
+    if after is not None and not isinstance(after, str):
+        raise ValueError("{} returned an invalid cursor".format(operation))
+    return response["data"], after
+
+
+def read_all_pages(
+    search: Callable[..., Dict[str, Any]], operation: str, **kwargs: Any
+) -> List[Dict[str, Any]]:
+    """Read every cursor page and reject cursors that do not advance."""
+    data: List[Dict[str, Any]] = []
+    after: Optional[str] = None
+    seen = set()
+    while True:
+        page, next_after = page_data(
+            search(after=after, limit=100, **kwargs), operation
+        )
+        data.extend(page)
+        if next_after is None:
+            return data
+        if next_after in seen:
+            raise ValueError("{} returned a non-advancing cursor".format(operation))
+        seen.add(next_after)
+        after = next_after
 
 
 def _add_pagination_metadata(result: dict, cursor: dict = None) -> dict:

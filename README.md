@@ -161,7 +161,39 @@ Every entry in `allowed_tools` becomes one MCP tool with the same method name. P
 }
 ```
 
-The method name is fixed when the server starts. Tool callers cannot override it, API tokens, or Conduit transport parameters. The previous `pha_*` convenience tools are not registered by the server anymore.
+The method name is fixed when the server starts. Tool callers cannot override it, API tokens, or Conduit transport parameters.
+
+### Typed Tools
+
+The server also registers typed high-level tools with names such as `pha_*`.
+These tools are not entries in `allowed_tools`, but every Conduit method they
+call internally is checked against the same allowlist. A typed tool fails with
+`METHOD_NOT_ALLOWED` if one of its required Conduit methods is not allowed.
+
+`pha_task_start` puts a Maniphest task in `En curso` in every associated
+Workboard that has an exact matching column. It discovers the task tags and
+columns automatically, reports Workboards without that column as `skipped`,
+and performs one `maniphest.edit` only after completing its read precheck.
+
+```json
+{
+  "task": "T123"
+}
+```
+
+`task` is required and must match `T` followed by a positive integer. To use
+`pha_task_start`, allow these underlying Conduit methods:
+
+```json
+{
+  "allowed_tools": [
+    "maniphest.search",
+    "project.search",
+    "project.column.search",
+    "maniphest.edit"
+  ]
+}
+```
 
 ### Security Notes
 
@@ -352,7 +384,41 @@ Cada entrada de `allowed_tools` se convierte en una herramienta MCP con el mismo
 }
 ```
 
-El metodo queda fijado al iniciar el servidor. Quien invoca una herramienta no puede modificar el metodo, los tokens API ni parametros de transporte Conduit. Las antiguas herramientas de conveniencia `pha_*` ya no se registran en el servidor.
+El metodo queda fijado al iniciar el servidor. Quien invoca una herramienta no puede modificar el metodo, los tokens API ni parametros de transporte Conduit.
+
+### Herramientas Tipadas
+
+El servidor tambien registra herramientas tipadas de alto nivel con nombres
+como `pha_*`. Estas herramientas no se anaden a `allowed_tools`, pero cada
+metodo Conduit que invocan internamente se valida contra la misma allowlist.
+Una herramienta tipada falla con `METHOD_NOT_ALLOWED` si uno de sus metodos
+Conduit requeridos no esta permitido.
+
+`pha_task_start` coloca una tarea Maniphest en `En curso` en todos los
+Workboards asociados que tengan una columna con ese nombre exacto. Descubre
+automaticamente los tags y las columnas, informa los Workboards sin esa
+columna en `skipped` y realiza un unico `maniphest.edit` solo despues de
+completar el precheck de lectura.
+
+```json
+{
+  "task": "T123"
+}
+```
+
+`task` es obligatorio y debe tener una `T` seguida de un entero positivo. Para
+usar `pha_task_start`, permite estos metodos Conduit internos:
+
+```json
+{
+  "allowed_tools": [
+    "maniphest.search",
+    "project.search",
+    "project.column.search",
+    "maniphest.edit"
+  ]
+}
+```
 
 ### Notas De Seguridad
 

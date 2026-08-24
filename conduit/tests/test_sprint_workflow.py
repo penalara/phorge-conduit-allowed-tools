@@ -127,7 +127,7 @@ class SprintWorkflowTest(unittest.TestCase):
         )
         self.assertEqual(len(result["created"]), 1)
         content = self.client.phriction.create_document.call_args.kwargs["content"]
-        self.assertIn("== @ana : Sprint Ana ==", content)
+        self.assertIn("== @ana : #sprint_ana ==", content)
 
     def test_new_task_estimate_is_rendered_in_phriction(self):
         result = self.create(

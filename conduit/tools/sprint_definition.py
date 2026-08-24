@@ -388,7 +388,7 @@ def render_sprint_remarkup(
         sprint_tag = owner_sprint_tags.get("@" + owner)
         heading = "@%s" % escape(owner)
         if sprint_tag:
-            heading += " : %s" % escape(sprint_tag)
+            heading += " : #%s" % sprint_tag.lower().replace(" ", "_")
         chunks.append("== %s ==" % heading)
         chunks.append("<table>")
         chunks.append(

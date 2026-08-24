@@ -201,10 +201,13 @@ and performs one `maniphest.edit` only after completing its read precheck.
 }
 ```
 
-`phorge_create_sprint` creates or patches the tasks in an already-loaded
-sprint definition and creates its Phriction page only after a complete read
-precheck and successful task writes. Clients provide the editable project and
-owner-tag configuration; the MCP server does not read OpenCode skill files.
+`phorge_preview_sprint` validates and resolves an already-loaded sprint
+definition without writes. It requires the SHA-256 hash of the UTF-8 source and
+returns a single-use preview id, wiki metadata, and Remarkup. Pass that id and
+the same hash to `phorge_create_sprint` to apply the prepared plan; it checks
+that the wiki has not changed before any task write. Clients provide the
+editable project and owner-tag configuration; the MCP server does not read
+OpenCode skill files.
 
 ```json
 {
@@ -221,7 +224,9 @@ owner-tag configuration; the MCP server does not read OpenCode skill files.
 }
 ```
 
-`wikiBasePath` must be a safe relative Phriction path. Priorities must use the
+`wikiBasePath` must be a safe relative Phriction path. Call preview first and
+provide the SHA-256 of `source_text` encoded as UTF-8; `phorge_create_sprint`
+accepts only `preview_id` and `source_hash`. Priorities must use the
 exact English visible name returned by Phorge, such as `High`, `Normal`, or
 `Low`. To use this tool, allow these underlying Conduit methods:
 
@@ -234,8 +239,9 @@ exact English visible name returned by Phorge, such as `High`, `Normal`, or
     "user.search",
     "project.search",
     "project.column.search",
-    "phriction.document.search",
-    "phriction.create"
+    "phriction.info",
+    "phriction.create",
+    "phriction.edit"
   ]
 }
 ```
@@ -245,7 +251,7 @@ Phriction page groups rows by final owner while preserving source order inside
 each owner section. Its table columns are `Título tarea`, `Código`,
 `Estimación`, `Tiempo real`, and `Observaciones`. It represents only the
 parent-child relationship declared by source indentation: same-owner children
-use one `↳` with one HTML nonbreaking space per visual level; a child whose
+use `⭢` once per visual level; a child whose
 direct parent has another owner is rendered as `(Hija de T123) Title` and
 starts a new visual root.
 
@@ -481,11 +487,13 @@ usar `pha_task_start`, permite estos metodos Conduit internos:
 }
 ```
 
-`phorge_create_sprint` crea o parchea las tareas de una definicion de sprint
-ya cargada y solo crea su pagina Phriction despues de un precheck completo de
-lectura y de completar correctamente las escrituras de tareas. El cliente
-proporciona la configuracion editable de proyecto y tags por owner; el MCP no
-lee archivos internos de Skills de OpenCode.
+`phorge_preview_sprint` valida y resuelve una definicion de sprint ya cargada
+sin escrituras. Requiere el hash SHA-256 del texto UTF-8 y devuelve un id de
+preview de un solo uso, metadatos de wiki y Remarkup. Pasa ese id y el mismo
+hash a `phorge_create_sprint` para aplicar el plan preparado; antes de escribir
+tareas comprueba que la wiki no haya cambiado. El cliente proporciona la
+configuracion editable de proyecto y tags por owner; el MCP no lee archivos
+internos de Skills de OpenCode.
 
 ```json
 {
@@ -502,7 +510,9 @@ lee archivos internos de Skills de OpenCode.
 }
 ```
 
-`wikiBasePath` debe ser una ruta relativa segura de Phriction. Las prioridades
+`wikiBasePath` debe ser una ruta relativa segura de Phriction. Llama primero a
+preview y proporciona el SHA-256 de `source_text` codificado como UTF-8;
+`phorge_create_sprint` acepta solo `preview_id` y `source_hash`. Las prioridades
 deben usar el nombre visible exacto en ingles devuelto por Phorge, como `High`,
 `Normal` o `Low`. Para usar esta herramienta, permite estos metodos Conduit:
 
@@ -515,8 +525,9 @@ deben usar el nombre visible exacto en ingles devuelto por Phorge, como `High`,
     "user.search",
     "project.search",
     "project.column.search",
-    "phriction.document.search",
-    "phriction.create"
+    "phriction.info",
+    "phriction.create",
+    "phriction.edit"
   ]
 }
 ```
@@ -526,7 +537,7 @@ titulo. La pagina Phriction agrupa las filas por owner final y conserva el
 orden del documento dentro de cada seccion. Sus columnas son `Titulo tarea`,
 `Codigo`, `Estimacion`, `Tiempo real` y `Observaciones`. Solo representa la
 relacion padre-hija declarada mediante indentacion: las hijas del mismo owner
-usan un unico `↳` con un espacio HTML no separable por nivel visual; una hija
+usan `⭢` una vez por nivel visual; una hija
 cuyo padre directo tenga otro owner se muestra como `(Hija de T123) Titulo` y
 comienza una nueva raiz visual.
 

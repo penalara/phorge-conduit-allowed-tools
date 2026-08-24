@@ -1,7 +1,11 @@
 # ruff: noqa: FA100
 """Atomic-precheck workflow for creating a sprint from a text definition."""
 
+import hashlib
 import re
+import secrets
+import threading
+from html import unescape
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -108,14 +112,160 @@ def _task_attachment(task: Dict[str, Any], name: str, key: str) -> List[str]:
     return value if isinstance(value, list) else []
 
 
+def _content_hash(content: Optional[str]) -> str:
+    return hashlib.sha256((content if content is not None else "<absent>").encode("utf-8")).hexdigest()
+
+
+def _source_hash_matches(source_text: Any, source_hash: Any) -> bool:
+    return (isinstance(source_text, str) and isinstance(source_hash, str)
+            and re.fullmatch(r"[0-9a-fA-F]{64}", source_hash) is not None
+            and hashlib.sha256(source_text.encode("utf-8")).hexdigest() == source_hash.lower())
+
+
+def _structured_error(code: str, message: str) -> dict:
+    return {"success": False, "ok": False, "phase": "precheck", "error_code": code,
+            "error": message, "errors": [{"line": 0, "code": code, "message": message}],
+            "mutationsAttempted": 0}
+
+
+def _wiki_content(info: Any) -> Optional[str]:
+    """Normalise phriction.info's version-dependent response shape."""
+    if not isinstance(info, dict):
+        return None
+    for candidate in (info, info.get("result"), info.get("document")):
+        if isinstance(candidate, dict):
+            for key in ("content", "text"):
+                if isinstance(candidate.get(key), str):
+                    return candidate[key]
+    return None
+
+
+def _wiki_protection(content: Optional[str]) -> Tuple[List[Dict[str, str]], bool]:
+    if content is None or not content.strip():
+        return [], False
+    tables = re.findall(r"<table\b[^>]*>(.*?)</table>", content, re.IGNORECASE | re.DOTALL)
+    if not tables:
+        return [], True
+    protected: List[Dict[str, str]] = []
+    recognised = False
+    for table in tables:
+        rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", table, re.IGNORECASE | re.DOTALL)
+        if not rows:
+            continue
+        cells = [unescape(re.sub(r"<[^>]+>", "", value)).strip() for value in re.findall(r"<t[hd]\b[^>]*>(.*?)</t[hd]>", rows[0], re.IGNORECASE | re.DOTALL)]
+        if "Tiempo real" not in cells:
+            continue
+        recognised = True
+        actual_index = cells.index("Tiempo real")
+        notes_index = cells.index("Observaciones") if "Observaciones" in cells else None
+        for row in rows[1:]:
+            values = [unescape(re.sub(r"<[^>]+>", "", value)).strip() for value in re.findall(r"<td\b[^>]*>(.*?)</td>", row, re.IGNORECASE | re.DOTALL)]
+            for label, index in (("Tiempo real", actual_index), ("Observaciones", notes_index)):
+                if index is not None and index < len(values) and values[index]:
+                    protected.append({"field": label, "value": values[index]})
+    return protected, not recognised
+
+
+def _execute_sprint(plan: Dict[str, Any]) -> dict:
+    definition = plan["definition"]
+    client = plan["client"]
+    users, priorities = plan["users"], plan["priorities"]
+    projects, columns = plan["projects"], plan["columns"]
+    config = plan["project_config"]
+    owner_sprint_tags = plan["owner_sprint_tags"]
+    records: List[Dict[str, Any]] = []
+
+    def write_failure(
+        error: PhabricatorAPIError,
+        failed_operation: Dict[str, Any],
+        pending_rows: List[Any],
+    ) -> dict:
+        last = None
+        if records:
+            record = records[-1]
+            last = {
+                "line": record["line"],
+                "task": record["title"],
+                "operation": "create" if record["status"] == "created" else "update",
+            }
+        return {
+            "success": False,
+            "ok": False,
+            "phase": "execution",
+            "partial": bool(records),
+            "error": {
+                "error_code": error.error_code,
+                "error_info": error.error_info,
+            },
+            "lastSuccessfulOperation": last,
+            "failedOperation": failed_operation,
+            "pendingTasks": [row.line_number for row in pending_rows],
+            "tasks": records,
+            **_record_groups(records),
+        }
+
+    for row in definition.rows:
+        explicit = [item.name for item in row.projects]
+        sprint_tag = owner_sprint_tags.get("@" + row.owner, "") if row.owner else ""
+        names = (explicit or [config["defaultTag"]]) if row.title is not None else explicit
+        if row.owner and sprint_tag:
+            names = _unique(names + [sprint_tag])
+        project_data = [projects[name] for name in names]
+        column_data = [columns[(item.name, item.column)] for item in row.projects if item.column]
+        transactions: List[Dict[str, Any]] = []
+        if row.title is not None:
+            transactions += [ManiphestClient.create_title_transaction(row.title), ManiphestClient.create_description_transaction(_DESCRIPTION), ManiphestClient.create_owner_transaction(users[row.owner]), ManiphestClient.create_priority_transaction(priorities[row.priority or "Normal"]), ManiphestClient.create_projects_add_transaction([item["phid"] for item in project_data])]
+        else:
+            if row.owner: transactions.append(ManiphestClient.create_owner_transaction(users[row.owner]))
+            if row.priority: transactions.append(ManiphestClient.create_priority_transaction(priorities[row.priority]))
+            if row.projects: transactions.append(ManiphestClient.create_projects_set_transaction([item["phid"] for item in project_data]))
+            elif row.owner: transactions.append(ManiphestClient.create_projects_add_transaction([item["phid"] for item in project_data]))
+        if row.subscribers: transactions.append(ManiphestClient.create_subscribers_set_transaction(_unique([users[name] for name in row.subscribers])))
+        if row.parent_row_index is not None:
+            parent = definition.rows[row.parent_row_index]
+            transactions.append(ManiphestClient.create_parent_transaction(getattr(parent, "_task_phid", None)) if row.title is not None else ManiphestClient.create_parents_add_transaction([getattr(parent, "_task_phid", None)]))
+        if column_data: transactions.append(ManiphestClient.create_column_transaction([item["phid"] for item in column_data]))
+        if transactions:
+            operation = "create" if row.title is not None else "update"
+            try:
+                response = client.maniphest.edit_task(object_identifier=row.task_identifier, transactions=transactions)
+            except PhabricatorAPIError as error:
+                position = definition.rows.index(row)
+                return write_failure(
+                    error,
+                    {"line": row.line_number, "task": row.existing_title or row.title, "operation": operation},
+                    definition.rows[position + 1:],
+                )
+            task_id, task_phid = _edit_object(response)
+            row.final_task_identifier = "T%d" % task_id
+            setattr(row, "_task_phid", task_phid)
+        records.append({"line": row.line_number, "task": row.final_task_identifier, "title": row.existing_title or row.title, "status": "created" if row.title is not None else ("updated" if transactions else "unchanged"), "projects": project_data, "columns": column_data})
+    content = render_sprint_remarkup(definition)
+    try:
+        if plan["wiki_exists"]:
+            wiki = client.phriction.edit_document(path=plan["wiki_path"], title=definition.name, content=content)
+            wiki_operation = "editWiki"
+        else:
+            wiki = client.phriction.create_document(path=plan["wiki_path"], title=definition.name, content=content)
+            wiki_operation = "createWiki"
+    except PhabricatorAPIError as error:
+        return write_failure(
+            error,
+            {"operation": "editWiki" if plan["wiki_exists"] else "createWiki"},
+            [],
+        )
+    return {"success": True, "ok": True, "sourcePath": plan["source_path"], "sprint": definition.name, "title": definition.name, "project": config, "wiki": {"path": plan["wiki_path"], "title": definition.name, "result": wiki}, "tasks": records, **_record_groups(records), "warnings": []}
+
+
 def register_sprint_tools(
     mcp: FastMCP, get_client_func: Callable[[], PhabricatorClient]
 ) -> None:
     """Register the sprint creation workflow."""
 
-    @mcp.tool()
-    @handle_api_errors
-    def phorge_create_sprint(
+    previews: Dict[str, Dict[str, Any]] = {}
+    previews_lock = threading.Lock()
+
+    def _prepare_sprint(
         source_path: str,
         source_text: str,
         project_config: Dict[str, str],
@@ -519,187 +669,61 @@ def register_sprint_tools(
 
         base = project_config["wikiBasePath"].strip("/")
         wiki_path = f"{base}/{definition.slug}/" if base else f"{definition.slug}/"
-        wiki_documents = read_all_pages(
-            client.phriction.search_documents,
-            "phriction.document.search",
-            constraints={"paths": [wiki_path]},
-        )
-        if wiki_documents:
-            _error(
-                errors, 1, "WIKI_EXISTS", f"Phriction path '{wiki_path}' already exists"
-            )
+        wiki_info = client.phriction.get_document_info(wiki_path)
+        wiki_content = _wiki_content(wiki_info)
+        wiki_exists = wiki_content is not None
+        protected_values, format_unknown = _wiki_protection(wiki_content)
         if errors:
             return _validation(errors)
-
-        records: List[Dict[str, Any]] = []
-        last_operation: Optional[Dict[str, Any]] = None
-        for row in definition.rows:
-            explicit_project_names = [project.name for project in row.projects]
-            sprint_name = (
-                owner_sprint_tags.get("@" + row.owner, "") if row.owner else ""
-            )
-            if row.title is not None:
-                tag_names = explicit_project_names or [project_config["defaultTag"]]
-                tag_names = _unique(tag_names + [sprint_name])
-            elif row.projects:
-                tag_names = _unique(
-                    explicit_project_names + ([sprint_name] if row.owner else [])
-                )
-            elif row.owner:
-                tag_names = [sprint_name]
-            else:
-                tag_names = []
-            project_data = [projects[name] for name in tag_names]
-            column_data = [
-                columns[(project.name, project.column)]
-                for project in row.projects
-                if project.column
-            ]
-            transactions: List[Dict[str, Any]] = []
-            if row.title is not None:
-                transactions.extend(
-                    [
-                        ManiphestClient.create_title_transaction(row.title),
-                        ManiphestClient.create_description_transaction(_DESCRIPTION),
-                        ManiphestClient.create_owner_transaction(users[row.owner]),
-                        ManiphestClient.create_priority_transaction(
-                            priorities[row.priority or "Normal"]
-                        ),
-                        ManiphestClient.create_projects_add_transaction(
-                            [item["phid"] for item in project_data]
-                        ),
-                    ]
-                )
-            else:
-                if row.owner:
-                    transactions.append(
-                        ManiphestClient.create_owner_transaction(users[row.owner])
-                    )
-                if row.priority:
-                    transactions.append(
-                        ManiphestClient.create_priority_transaction(
-                            priorities[row.priority]
-                        )
-                    )
-                if row.projects:
-                    transactions.append(
-                        ManiphestClient.create_projects_set_transaction(
-                            [item["phid"] for item in project_data]
-                        )
-                    )
-                elif row.owner:
-                    transactions.append(
-                        ManiphestClient.create_projects_add_transaction(
-                            [item["phid"] for item in project_data]
-                        )
-                    )
-            if row.subscribers:
-                transactions.append(
-                    ManiphestClient.create_subscribers_set_transaction(
-                        _unique([users[name] for name in row.subscribers])
-                    )
-                )
-            if row.parent_row_index is not None:
-                parent = definition.rows[row.parent_row_index]
-                parent_phid = getattr(parent, "_task_phid", None)
-                transactions.append(
-                    ManiphestClient.create_parent_transaction(parent_phid)
-                    if row.title is not None
-                    else ManiphestClient.create_parents_add_transaction([parent_phid])
-                )
-            if column_data:
-                transactions.append(
-                    ManiphestClient.create_column_transaction(
-                        [item["phid"] for item in column_data]
-                    )
-                )
-
-            operation = {
-                "line": row.line_number,
-                "task": row.task_identifier or row.title,
-                "operation": "create" if row.title is not None else "update",
-            }
-            try:
-                if transactions:
-                    response = client.maniphest.edit_task(
-                        object_identifier=row.task_identifier,
-                        transactions=transactions,
-                    )
-                    task_id, task_phid = _edit_object(response)
-                    row.final_task_identifier = f"T{task_id}"
-                    setattr(row, "_task_phid", task_phid)  # noqa: B010
-                status = (
-                    "created"
-                    if row.title is not None
-                    else ("updated" if transactions else "unchanged")
-                )
-                record = {
-                    "line": row.line_number,
-                    "task": row.final_task_identifier,
-                    "title": row.existing_title or row.title,
-                    "status": status,
-                    "projects": project_data,
-                    "columns": column_data,
-                }
-                records.append(record)
-                if transactions:
-                    last_operation = operation
-            except Exception as exc:  # noqa: BLE001
-                return {
-                    "success": False,
-                    "ok": False,
-                    "phase": "write",
-                    "partial": any(
-                        record["status"] in ("created", "updated") for record in records
-                    ),
-                    "error_code": "PARTIAL_WRITE",
-                    "error": _api_error(exc),
-                    "lastSuccessfulOperation": last_operation,
-                    "failedOperation": {**operation, "error": _api_error(exc)},
-                    "tasks": records,
-                    **_record_groups(records),
-                    "pendingTasks": [
-                        candidate.line_number
-                        for candidate in definition.rows[row.row_index + 1 :]
-                    ],
-                    "wiki": None,
-                }
-
-        wiki_operation = {"operation": "createWiki", "path": wiki_path}
-        try:
-            wiki = client.phriction.create_document(
-                path=wiki_path,
-                title=definition.name,
-                content=render_sprint_remarkup(definition),
-            )
-        except Exception as exc:  # noqa: BLE001
-            return {
-                "success": False,
-                "ok": False,
-                "phase": "write",
-                "partial": True,
-                "error_code": "PARTIAL_WRITE",
-                "error": _api_error(exc),
-                "lastSuccessfulOperation": last_operation,
-                "failedOperation": {**wiki_operation, "error": _api_error(exc)},
-                "tasks": records,
-                **_record_groups(records),
-                "pendingTasks": [],
-                "wiki": None,
-            }
-
         return {
-            "success": True,
-            "ok": True,
-            "sourcePath": source_path,
-            "sprint": definition.name,
-            "title": definition.name,
-            "project": dict(project_config),
-            "wiki": {"path": wiki_path, "title": definition.name, "result": wiki},
-            "tasks": records,
-            **_record_groups(records),
-            "warnings": [],
+            "definition": definition, "client": client, "users": users,
+            "priorities": priorities, "projects": projects, "columns": columns,
+            "source_path": source_path, "project_config": dict(project_config),
+            "owner_sprint_tags": dict(owner_sprint_tags),
+            "wiki_path": wiki_path, "wiki_exists": wiki_exists,
+            "wiki_hash": _content_hash(wiki_content),
+            "protected_values": protected_values, "format_unknown": format_unknown,
         }
+
+    @mcp.tool()
+    @handle_api_errors
+    def phorge_preview_sprint(source_path: str, source_text: str, source_hash: str,
+                              project_config: Dict[str, str], owner_sprint_tags: Dict[str, str]) -> dict:
+        """Validate and resolve a sprint without creating or updating anything."""
+        if not _source_hash_matches(source_text, source_hash):
+            return _structured_error("SPRINT_SOURCE_HASH_MISMATCH", "source_hash does not match source_text")
+        prepared = _prepare_sprint(source_path, source_text, project_config, owner_sprint_tags)
+        if "success" in prepared:
+            return prepared
+        preview_id = secrets.token_urlsafe(24)
+        prepared["source_hash"] = source_hash.lower()
+        with previews_lock:
+            previews[preview_id] = prepared
+        definition = prepared["definition"]
+        return {
+            "success": True, "ok": True, "previewId": preview_id,
+            "wiki": {"path": prepared["wiki_path"], "title": definition.name,
+                     "exists": prepared["wiki_exists"]},
+            "remarkup": render_sprint_remarkup(definition, preview=True),
+            "requiresOverwriteConfirmation": bool(prepared["protected_values"] or prepared["format_unknown"]),
+            "protectedValues": prepared["protected_values"],
+            "formatUnknown": prepared["format_unknown"],
+        }
+
+    @mcp.tool()
+    @handle_api_errors
+    def phorge_create_sprint(preview_id: str, source_hash: str) -> dict:
+        """Apply one previously validated sprint preview."""
+        with previews_lock:
+            prepared = previews.pop(preview_id, None)
+        if prepared is None:
+            return _structured_error("SPRINT_PREVIEW_NOT_FOUND", "Preview was not found or was already used")
+        if not isinstance(source_hash, str) or source_hash != prepared.get("source_hash"):
+            return _structured_error("SPRINT_SOURCE_CHANGED_AFTER_PREVIEW", "source hash differs from preview")
+        current = _wiki_content(prepared["client"].phriction.get_document_info(prepared["wiki_path"]))
+        if _content_hash(current) != prepared["wiki_hash"]:
+            return _structured_error("SPRINT_WIKI_CHANGED_AFTER_PREVIEW", "Phriction page changed after preview")
+        return _execute_sprint(prepared)
 
 
 __all__ = ["register_sprint_tools"]

@@ -1,3 +1,4 @@
+import hashlib
 import unittest
 from unittest.mock import Mock
 
@@ -30,7 +31,9 @@ class SprintWorkflowTest(unittest.TestCase):
         self.client = Mock()
         mcp = FakeMCP()
         register_sprint_tools(mcp, lambda: self.client)
-        self.create = mcp.tools["phorge_create_sprint"]
+        self.preview = mcp.tools["phorge_preview_sprint"]
+        self.apply_preview = mcp.tools["phorge_create_sprint"]
+        self.create = self._create
         self.config = {
             "name": "Demo",
             "wikiBasePath": "teams/demo",
@@ -47,7 +50,7 @@ class SprintWorkflowTest(unittest.TestCase):
         self.client.project.search_projects.side_effect = self._projects
         self.client.project.search_columns.return_value = page([])
         self.client.maniphest.search_tasks.return_value = page([])
-        self.client.phriction.search_documents.return_value = page([])
+        self.client.phriction.get_document_info.return_value = {}
         self.client.phriction.create_document.return_value = {
             "slug": "teams/demo/sprint-1/"
         }
@@ -60,6 +63,13 @@ class SprintWorkflowTest(unittest.TestCase):
             }
 
         self.client.maniphest.edit_task.side_effect = edit
+
+    def _create(self, source_path, source_text, config, tags):
+        source_hash = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+        preview = self.preview(source_path, source_text, source_hash, config, tags)
+        if not preview.get("success"):
+            return preview
+        return self.apply_preview(preview["previewId"], source_hash)
 
     def _users(self, constraints=None, **kwargs):
         constraints = constraints or {}
@@ -343,7 +353,7 @@ class SprintWorkflowTest(unittest.TestCase):
                 result = self.create(*args)
                 self._assert_zero_writes(result)
 
-    def test_resolution_and_wiki_collisions_abort_before_writes(self):
+    def test_resolution_errors_abort_before_writes_and_existing_wiki_is_updated(self):
         self.client.user.search.side_effect = lambda **kwargs: page([])
         result = self.create(
             "one.txt", "# Sprint 1\nBuild;;@ana", self.config, self.tags
@@ -351,13 +361,12 @@ class SprintWorkflowTest(unittest.TestCase):
         self._assert_zero_writes(result)
         self.client.reset_mock()
         self.client.user.search.side_effect = self._users
-        self.client.phriction.search_documents.return_value = page(
-            [{"phid": "PHID-WIKI-one"}]
-        )
+        self.client.phriction.get_document_info.return_value = {"content": "existing"}
         result = self.create(
             "one.txt", "# Sprint 1\nBuild;;@ana", self.config, self.tags
         )
-        self._assert_zero_writes(result)
+        self.assertTrue(result["success"])
+        self.client.phriction.edit_document.assert_called_once()
 
     def test_missing_owner_sprint_tag_map_is_a_zero_write_precheck(self):
         result = self.create(

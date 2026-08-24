@@ -315,6 +315,11 @@ class PhrictionClient(BasePhabricatorClient):
 
         return self._make_request("phriction.edit", params)
 
+    def get_document_info(self, path: str) -> Dict[str, Any]:
+        """Return the current Phriction document metadata and content."""
+
+        return self._make_request("phriction.info", {"slug": path})
+
 
 class RemarkupClient(BasePhabricatorClient):
     """

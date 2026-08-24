@@ -320,7 +320,7 @@ def parse_sprint_definition(text: str) -> SprintDefinition:
     )
 
 
-def render_sprint_remarkup(definition: SprintDefinition) -> str:
+def render_sprint_remarkup(definition: SprintDefinition, preview: bool = False) -> str:
     """Render sprint rows as HTML Remarkup grouped by final owner.
 
     Owner groups follow the first appearance of each resolved owner.  No sprint
@@ -367,10 +367,12 @@ def render_sprint_remarkup(definition: SprintDefinition) -> str:
         parent = definition.rows[row.parent_row_index]
         if owner_for(parent) != owner_for(row):
             parent_code = escape(
-                parent.final_task_identifier or parent.task_identifier or ""
+                parent.final_task_identifier
+                or parent.task_identifier
+                or ("TODO" if preview and parent.title is not None else "")
             )
             return "(Hija de %s) %s" % (parent_code, title)
-        return "&nbsp;" * visual_depth(row) + "↳ " + title
+        return "⭢" * visual_depth(row) + " " + title
 
     chunks: List[str] = []
     for owner in order:
@@ -381,7 +383,11 @@ def render_sprint_remarkup(definition: SprintDefinition) -> str:
             "<th>Tiempo real</th><th>Observaciones</th></tr>"
         )
         for row in groups[owner]:
-            identifier = row.final_task_identifier or row.task_identifier or ""
+            identifier = (
+                row.final_task_identifier
+                or row.task_identifier
+                or ("TODO" if preview and row.title is not None else "")
+            )
             values = [
                 rendered_title(row),
                 escape(identifier),

@@ -285,10 +285,10 @@ def test_render_uses_document_hierarchy_within_each_owner_section():
     rendered = render_sprint_remarkup(definition)
 
     assert "<td>Root</td><td>T100</td>" in rendered
-    assert "<td>&nbsp;↳ Child</td><td>T101</td>" in rendered
-    assert "<td>&nbsp;&nbsp;↳ Grandchild</td><td>T102</td>" in rendered
+    assert "<td>⭢ Child</td><td>T101</td>" in rendered
+    assert "<td>⭢⭢ Grandchild</td><td>T102</td>" in rendered
     assert "<td>(Hija de T100) Other owner</td><td>T103</td>" in rendered
-    assert "<td>&nbsp;↳ Bob child</td><td>T104</td>" in rendered
+    assert "<td>⭢ Bob child</td><td>T104</td>" in rendered
     assert "<td>(Hija de T103) Alice return</td><td>T105</td>" in rendered
 
     alice_section = rendered[rendered.index("== @alice ==") : rendered.index("== @bob ==")]
@@ -299,3 +299,11 @@ def test_render_uses_document_hierarchy_within_each_owner_section():
 
 def test_render_empty_definition_is_empty():
     assert render_sprint_remarkup(SprintDefinition("Sprint 1", "sprint-1")) == ""
+
+
+def test_preview_renderer_uses_todo_for_new_external_parent():
+    parent = _render_row(0, "alice", None, "Parent")
+    child = _render_row(1, "bob", None, "Child", parent_row_index=0)
+    rendered = render_sprint_remarkup(SprintDefinition("Sprint", "sprint", [parent, child]), preview=True)
+    assert "<td>TODO</td>" in rendered
+    assert "(Hija de TODO) Child" in rendered

@@ -240,6 +240,15 @@ exact English visible name returned by Phorge, such as `High`, `Normal`, or
 }
 ```
 
+Blank lines in `source_text` are ignored, including before the header. The
+Phriction page groups rows by final owner while preserving source order inside
+each owner section. Its table columns are `Título tarea`, `Código`,
+`Estimación`, `Tiempo real`, and `Observaciones`. It represents only the
+parent-child relationship declared by source indentation: same-owner children
+use one `↳` with one HTML nonbreaking space per visual level; a child whose
+direct parent has another owner is rendered as `(Hija de T123) Title` and
+starts a new visual root.
+
 ### Security Notes
 
 - The allowlist controls the entire MCP surface. Include write or administrative methods only when intended.
@@ -511,6 +520,15 @@ deben usar el nombre visible exacto en ingles devuelto por Phorge, como `High`,
   ]
 }
 ```
+
+Las lineas vacias de `source_text` se ignoran, incluidas las anteriores al
+titulo. La pagina Phriction agrupa las filas por owner final y conserva el
+orden del documento dentro de cada seccion. Sus columnas son `Titulo tarea`,
+`Codigo`, `Estimacion`, `Tiempo real` y `Observaciones`. Solo representa la
+relacion padre-hija declarada mediante indentacion: las hijas del mismo owner
+usan un unico `↳` con un espacio HTML no separable por nivel visual; una hija
+cuyo padre directo tenga otro owner se muestra como `(Hija de T123) Titulo` y
+comienza una nueva raiz visual.
 
 ### Notas De Seguridad
 

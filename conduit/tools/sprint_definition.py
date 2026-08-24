@@ -184,33 +184,42 @@ def _parse_projects(
 def parse_sprint_definition(text: str) -> SprintDefinition:
     """Parse ``text`` without raising for user input errors.
 
-    Blank task lines are ignored.  Every nonblank row is retained so callers
-    can show all errors at once and row indexes remain stable.
+    Blank lines are ignored, including before the header. Every nonblank task
+    row is retained so callers can show all errors at once and row indexes
+    remain stable.
     """
 
     lines = text.splitlines()
     errors: List[SprintParseError] = []
+    header_index = next(
+        (index for index, line in enumerate(lines) if line.strip()), None
+    )
     name = None
-    if not lines:
+    if header_index is None:
         errors.append(SprintParseError(1, "Missing sprint header"))
     else:
-        header = _HEADER_RE.fullmatch(lines[0])
+        header_line_number = header_index + 1
+        header = _HEADER_RE.fullmatch(lines[header_index])
         if header:
             name = header.group(1).strip()
             if not name:
-                errors.append(SprintParseError(1, "Sprint title cannot be empty"))
+                errors.append(
+                    SprintParseError(header_line_number, "Sprint title cannot be empty")
+                )
                 name = None
         else:
             errors.append(
                 SprintParseError(
-                    1, "First physical line must use '#Title' or '# Title'"
+                    header_line_number,
+                    "First nonblank line must use '#Title' or '# Title'",
                 )
             )
 
     rows: List[SprintTaskRow] = []
     levels: Dict[int, int] = {}
     previous_level = 0
-    for line_number, physical_line in enumerate(lines[1:], start=2):
+    start = (header_index + 1) if header_index is not None else len(lines)
+    for line_number, physical_line in enumerate(lines[start:], start=start + 1):
         if not physical_line.strip():
             continue
 
@@ -316,6 +325,7 @@ def render_sprint_remarkup(definition: SprintDefinition) -> str:
 
     Owner groups follow the first appearance of each resolved owner.  No sprint
     title heading is emitted, allowing callers to place the table in any page.
+    Only parent relationships declared by the sprint document are represented.
     """
 
     groups: Dict[str, List[SprintTaskRow]] = {}
@@ -331,27 +341,57 @@ def render_sprint_remarkup(definition: SprintDefinition) -> str:
             order.append(owner)
         groups[owner].append(row)
 
+    visual_depths: Dict[int, int] = {}
+
+    def owner_for(row: SprintTaskRow) -> str:
+        owner = row.final_owner_username or row.owner
+        if owner is None:
+            raise ValueError("Every sprint row must have a final owner before rendering")
+        return owner
+
+    def visual_depth(row: SprintTaskRow) -> int:
+        if row.row_index in visual_depths:
+            return visual_depths[row.row_index]
+        if row.parent_row_index is None:
+            depth = 0
+        else:
+            parent = definition.rows[row.parent_row_index]
+            depth = visual_depth(parent) + 1 if owner_for(parent) == owner_for(row) else 0
+        visual_depths[row.row_index] = depth
+        return depth
+
+    def rendered_title(row: SprintTaskRow) -> str:
+        title = escape(row.existing_title or row.title or "")
+        if row.parent_row_index is None:
+            return title
+        parent = definition.rows[row.parent_row_index]
+        if owner_for(parent) != owner_for(row):
+            parent_code = escape(
+                parent.final_task_identifier or parent.task_identifier or ""
+            )
+            return "(Hija de %s) %s" % (parent_code, title)
+        return "&nbsp;" * visual_depth(row) + "↳ " + title
+
     chunks: List[str] = []
     for owner in order:
         chunks.append("== @%s ==" % escape(owner))
         chunks.append("<table>")
         chunks.append(
-            "<tr><th>Tarea</th><th>Título tarea</th>"
-            "<th>Estado</th><th>Estimación</th><th>Tiempo real</th></tr>"
+            "<tr><th>Título tarea</th><th>Código</th><th>Estimación</th>"
+            "<th>Tiempo real</th><th>Observaciones</th></tr>"
         )
         for row in groups[owner]:
             identifier = row.final_task_identifier or row.task_identifier or ""
-            title = row.existing_title or row.title or ""
             values = [
-                identifier,
-                title,
-                row.status,
-                row.estimation or "",
-                row.actual_time,
+                rendered_title(row),
+                escape(identifier),
+                escape(row.estimation or ""),
+                escape(row.actual_time),
+                "",
             ]
             chunks.append(
                 "<tr>%s</tr>"
-                % "".join("<td>%s</td>" % escape(value) for value in values)
+                % "".join("<td>%s</td>" % value for value in values)
             )
         chunks.append("</table>")
     return "\n".join(chunks)

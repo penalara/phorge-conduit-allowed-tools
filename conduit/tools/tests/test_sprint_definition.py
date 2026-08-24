@@ -15,9 +15,9 @@ from conduit.tools.sprint_definition import (
 
 
 @pytest.mark.parametrize("header", ["#Sprint 17", "# Sprint 17"])
-def test_parses_supported_first_line_headers_and_ignores_later_blanks(header):
+def test_parses_header_on_first_nonblank_line_and_ignores_blank_lines(header):
     result = parse_sprint_definition(
-        "%s\n\nNew task;;@alice;;;\n   \nT42;;;;;" % header
+        "\n  \n%s\n\nNew task;;@alice;;;\n   \nT42;;;;;" % header
     )
 
     assert result.is_valid
@@ -25,16 +25,16 @@ def test_parses_supported_first_line_headers_and_ignores_later_blanks(header):
     assert result.slug == "sprint-17"
     assert [row.title for row in result.rows] == ["New task", None]
     assert result.rows[1].task_identifier == "T42"
-    assert [row.line_number for row in result.rows] == [3, 5]
+    assert [row.line_number for row in result.rows] == [5, 7]
 
 
-def test_header_must_be_the_first_physical_line():
-    result = parse_sprint_definition("\n# Sprint 17\nTask")
+def test_header_must_be_the_first_nonblank_line():
+    result = parse_sprint_definition("\nSprint 17\nTask")
 
     assert not result.is_valid
     assert result.name is None
-    assert result.errors[0].line_number == 1
-    assert "First physical line" in result.errors[0].message
+    assert result.errors[0].line_number == 2
+    assert "First nonblank line" in result.errors[0].message
 
 
 @pytest.mark.parametrize(
@@ -46,7 +46,7 @@ def test_rejects_unsupported_header_spacing(header):
     assert not result.is_valid
     assert result.name is None
     assert any(
-        "First physical line" in error.message for error in result.errors
+        "First nonblank line" in error.message for error in result.errors
     )
 
 
@@ -198,13 +198,19 @@ def test_api_resolved_fields_are_mutable():
 
 
 def _render_row(
-    index, owner, identifier, title, status="Open", estimate="2h", actual="1h"
+    index,
+    owner,
+    identifier,
+    title,
+    estimate="2h",
+    actual="1h",
+    parent_row_index=None,
 ):
     return SprintTaskRow(
         row_index=index,
         line_number=index + 2,
-        level=0,
-        parent_row_index=None,
+        level=0 if parent_row_index is None else 1,
+        parent_row_index=parent_row_index,
         title=title,
         task_identifier=None,
         estimation=estimate,
@@ -213,7 +219,6 @@ def _render_row(
         priority=None,
         final_owner_username=owner,
         final_task_identifier=identifier,
-        status=status,
         actual_time=actual,
     )
 
@@ -235,8 +240,8 @@ def test_render_groups_final_owners_in_first_appearance_order():
     assert rendered.index("T2") < rendered.index("T3") < rendered.index("@alice")
     assert "Sprint Secret" not in rendered
     assert rendered.count("<table>") == 2
-    assert "<th>Tarea</th><th>Título tarea</th><th>Estado</th>" in rendered
-    assert "<th>Estimación</th><th>Tiempo real</th>" in rendered
+    assert "<th>Título tarea</th><th>Código</th><th>Estimación</th>" in rendered
+    assert "<th>Tiempo real</th><th>Observaciones</th>" in rendered
 
 
 def test_render_groups_by_owner_only_and_does_not_add_subscriber_section():
@@ -251,7 +256,7 @@ def test_render_groups_by_owner_only_and_does_not_add_subscriber_section():
 
 
 def test_render_escapes_all_dynamic_html_and_uses_resolved_title():
-    row = _render_row(0, "a&b", "T1<script>", "new <title>", status="A&B")
+    row = _render_row(0, "a&b", "T1<script>", "new <title>")
     row.existing_title = "resolved <title>"
     definition = SprintDefinition("Sprint 1", "sprint-1", [row])
 
@@ -260,8 +265,36 @@ def test_render_escapes_all_dynamic_html_and_uses_resolved_title():
     assert "@a&amp;b" in rendered
     assert "T1&lt;script&gt;" in rendered
     assert "resolved &lt;title&gt;" in rendered
-    assert "A&amp;B" in rendered
     assert "<script>" not in rendered
+
+
+def test_render_uses_document_hierarchy_within_each_owner_section():
+    definition = SprintDefinition(
+        name="Sprint Tree",
+        slug="sprint-tree",
+        rows=[
+            _render_row(0, "alice", "T100", "Root"),
+            _render_row(1, "alice", "T101", "Child", parent_row_index=0),
+            _render_row(2, "alice", "T102", "Grandchild", parent_row_index=1),
+            _render_row(3, "bob", "T103", "Other owner", parent_row_index=0),
+            _render_row(4, "bob", "T104", "Bob child", parent_row_index=3),
+            _render_row(5, "alice", "T105", "Alice return", parent_row_index=3),
+        ],
+    )
+
+    rendered = render_sprint_remarkup(definition)
+
+    assert "<td>Root</td><td>T100</td>" in rendered
+    assert "<td>&nbsp;↳ Child</td><td>T101</td>" in rendered
+    assert "<td>&nbsp;&nbsp;↳ Grandchild</td><td>T102</td>" in rendered
+    assert "<td>(Hija de T100) Other owner</td><td>T103</td>" in rendered
+    assert "<td>&nbsp;↳ Bob child</td><td>T104</td>" in rendered
+    assert "<td>(Hija de T103) Alice return</td><td>T105</td>" in rendered
+
+    alice_section = rendered[rendered.index("== @alice ==") : rendered.index("== @bob ==")]
+    assert alice_section.index("T100") < alice_section.index("T101")
+    assert alice_section.index("T101") < alice_section.index("T102")
+    assert alice_section.index("T102") < alice_section.index("T105")
 
 
 def test_render_empty_definition_is_empty():

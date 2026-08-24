@@ -1,4 +1,3 @@
-import hashlib
 import unittest
 from unittest.mock import Mock
 
@@ -49,11 +48,8 @@ class SprintPreviewTest(unittest.TestCase):
         }
         self.client.phriction.create_document.return_value = {"slug": "teams/demo/sprint-1/"}
 
-    def _hash(self, text):
-        return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
     def _preview(self, text="# Sprint 1\nBuild;;@ana"):
-        return self.preview("one.txt", text, self._hash(text), self.config, self.tags)
+        return self.preview("one.txt", text, self.config, self.tags)
 
     def test_preview_has_zero_writes_and_returns_todo_remarkup(self):
         result = self._preview()
@@ -63,30 +59,23 @@ class SprintPreviewTest(unittest.TestCase):
         self.client.phriction.create_document.assert_not_called()
         self.client.phriction.edit_document.assert_not_called()
 
-    def test_preview_rejects_source_hash_mismatch_before_reads(self):
-        result = self.preview("one.txt", "# Sprint 1\nBuild;;@ana", "0" * 64, self.config, self.tags)
-        self.assertEqual(result["error_code"], "SPRINT_SOURCE_HASH_MISMATCH")
-        self.client.maniphest.search_tasks.assert_not_called()
-
-    def test_preview_accepts_a_canonical_hash_for_crlf_source_text(self):
+    def test_preview_accepts_crlf_source_text(self):
         text = "# Sprint 1\r\nBuild;;@ana"
-        canonical_hash = self._hash(text.replace("\r\n", "\n"))
-
-        result = self.preview("one.txt", text, canonical_hash, self.config, self.tags)
+        result = self._preview(text)
 
         self.assertTrue(result["success"])
 
     def test_preview_id_is_single_use(self):
         preview = self._preview()
-        result = self.create(preview["previewId"], self._hash("# Sprint 1\nBuild;;@ana"))
+        result = self.create(preview["previewId"])
         self.assertTrue(result["success"])
-        second = self.create(preview["previewId"], self._hash("# Sprint 1\nBuild;;@ana"))
+        second = self.create(preview["previewId"])
         self.assertEqual(second["error_code"], "SPRINT_PREVIEW_NOT_FOUND")
 
     def test_wiki_guard_aborts_before_task_writes(self):
         preview = self._preview()
         self.client.phriction.get_document_info.return_value = {"content": "changed"}
-        result = self.create(preview["previewId"], self._hash("# Sprint 1\nBuild;;@ana"))
+        result = self.create(preview["previewId"])
         self.assertEqual(result["error_code"], "SPRINT_WIKI_CHANGED_AFTER_PREVIEW")
         self.client.maniphest.edit_task.assert_not_called()
 
@@ -95,7 +84,7 @@ class SprintPreviewTest(unittest.TestCase):
             "content": "<table><tr><th>Tiempo real</th></tr></table>"
         }
         preview = self._preview()
-        result = self.create(preview["previewId"], self._hash("# Sprint 1\nBuild;;@ana"))
+        result = self.create(preview["previewId"])
         self.assertTrue(result["success"])
         self.client.phriction.edit_document.assert_called_once()
         self.client.phriction.create_document.assert_not_called()

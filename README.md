@@ -202,10 +202,9 @@ and performs one `maniphest.edit` only after completing its read precheck.
 ```
 
 `phorge_preview_sprint` validates and resolves an already-loaded sprint
-definition without writes. It requires the SHA-256 hash of the UTF-8 source
-after normalizing CRLF and CR line endings to LF, and
-returns a single-use preview id, wiki metadata, and Remarkup. Pass that id and
-the same hash to `phorge_create_sprint` to apply the prepared plan; it checks
+definition without writes and returns a single-use preview id, wiki metadata,
+and Remarkup. Pass that id to `phorge_create_sprint` to apply the prepared
+plan; it checks
 that the wiki has not changed before any task write. Clients provide the
 editable project and owner-tag configuration; the MCP server does not read
 OpenCode skill files.
@@ -225,10 +224,8 @@ OpenCode skill files.
 }
 ```
 
-`wikiBasePath` must be a safe relative Phriction path. Call preview first and
-provide the SHA-256 of `source_text` encoded as UTF-8 after normalizing CRLF
-and CR line endings to LF; `phorge_create_sprint`
-accepts only `preview_id` and `source_hash`. Priorities must use the
+`wikiBasePath` must be a safe relative Phriction path. Call preview first;
+`phorge_create_sprint` accepts only `preview_id`. Priorities must use the
 exact English visible name returned by Phorge, such as `High`, `Normal`, or
 `Low`. To use this tool, allow these underlying Conduit methods:
 
@@ -490,10 +487,8 @@ usar `pha_task_start`, permite estos metodos Conduit internos:
 ```
 
 `phorge_preview_sprint` valida y resuelve una definicion de sprint ya cargada
-sin escrituras. Requiere el hash SHA-256 del texto UTF-8 tras normalizar los
-finales de linea CRLF y CR a LF, y devuelve un id de
-preview de un solo uso, metadatos de wiki y Remarkup. Pasa ese id y el mismo
-hash a `phorge_create_sprint` para aplicar el plan preparado; antes de escribir
+sin escrituras y devuelve un id de preview de un solo uso, metadatos de wiki y
+Remarkup. Pasa ese id a `phorge_create_sprint` para aplicar el plan preparado; antes de escribir
 tareas comprueba que la wiki no haya cambiado. El cliente proporciona la
 configuracion editable de proyecto y tags por owner; el MCP no lee archivos
 internos de Skills de OpenCode.
@@ -514,9 +509,7 @@ internos de Skills de OpenCode.
 ```
 
 `wikiBasePath` debe ser una ruta relativa segura de Phriction. Llama primero a
-preview y proporciona el SHA-256 de `source_text` codificado como UTF-8 tras
-normalizar los finales de linea CRLF y CR a LF;
-`phorge_create_sprint` acepta solo `preview_id` y `source_hash`. Las prioridades
+preview; `phorge_create_sprint` acepta solo `preview_id`. Las prioridades
 deben usar el nombre visible exacto en ingles devuelto por Phorge, como `High`,
 `Normal` o `Low`. Para usar esta herramienta, permite estos metodos Conduit:
 

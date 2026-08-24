@@ -116,17 +116,6 @@ def _content_hash(content: Optional[str]) -> str:
     return hashlib.sha256((content if content is not None else "<absent>").encode("utf-8")).hexdigest()
 
 
-def _canonical_source_text(source_text: str) -> str:
-    """Make source hashes independent of the platform line ending."""
-    return source_text.replace("\r\n", "\n").replace("\r", "\n")
-
-
-def _source_hash_matches(source_text: Any, source_hash: Any) -> bool:
-    return (isinstance(source_text, str) and isinstance(source_hash, str)
-            and re.fullmatch(r"[0-9a-fA-F]{64}", source_hash) is not None
-            and hashlib.sha256(_canonical_source_text(source_text).encode("utf-8")).hexdigest() == source_hash.lower())
-
-
 def _structured_error(code: str, message: str) -> dict:
     return {"success": False, "ok": False, "phase": "precheck", "error_code": code,
             "error": message, "errors": [{"line": 0, "code": code, "message": message}],
@@ -219,7 +208,7 @@ def _execute_sprint(plan: Dict[str, Any]) -> dict:
         column_data = [columns[(item.name, item.column)] for item in row.projects if item.column]
         transactions: List[Dict[str, Any]] = []
         if row.title is not None:
-            transactions += [ManiphestClient.create_title_transaction(row.title), ManiphestClient.create_description_transaction(_DESCRIPTION), ManiphestClient.create_owner_transaction(users[row.owner]), ManiphestClient.create_priority_transaction(priorities[row.priority or "Normal"]), ManiphestClient.create_projects_add_transaction([item["phid"] for item in project_data])]
+            transactions += [ManiphestClient.create_title_transaction(row.title), ManiphestClient.create_description_transaction(row.description or _DESCRIPTION), ManiphestClient.create_owner_transaction(users[row.owner]), ManiphestClient.create_priority_transaction(priorities[row.priority or "Normal"]), ManiphestClient.create_projects_add_transaction([item["phid"] for item in project_data])]
         else:
             if row.owner: transactions.append(ManiphestClient.create_owner_transaction(users[row.owner]))
             if row.priority: transactions.append(ManiphestClient.create_priority_transaction(priorities[row.priority]))
@@ -692,16 +681,13 @@ def register_sprint_tools(
 
     @mcp.tool()
     @handle_api_errors
-    def phorge_preview_sprint(source_path: str, source_text: str, source_hash: str,
-                              project_config: Dict[str, str], owner_sprint_tags: Dict[str, str]) -> dict:
+    def phorge_preview_sprint(source_path: str, source_text: str,
+                               project_config: Dict[str, str], owner_sprint_tags: Dict[str, str]) -> dict:
         """Validate and resolve a sprint without creating or updating anything."""
-        if not _source_hash_matches(source_text, source_hash):
-            return _structured_error("SPRINT_SOURCE_HASH_MISMATCH", "source_hash does not match source_text")
         prepared = _prepare_sprint(source_path, source_text, project_config, owner_sprint_tags)
         if "success" in prepared:
             return prepared
         preview_id = secrets.token_urlsafe(24)
-        prepared["source_hash"] = source_hash.lower()
         with previews_lock:
             previews[preview_id] = prepared
         definition = prepared["definition"]
@@ -717,14 +703,12 @@ def register_sprint_tools(
 
     @mcp.tool()
     @handle_api_errors
-    def phorge_create_sprint(preview_id: str, source_hash: str) -> dict:
+    def phorge_create_sprint(preview_id: str) -> dict:
         """Apply one previously validated sprint preview."""
         with previews_lock:
             prepared = previews.pop(preview_id, None)
         if prepared is None:
             return _structured_error("SPRINT_PREVIEW_NOT_FOUND", "Preview was not found or was already used")
-        if not isinstance(source_hash, str) or source_hash != prepared.get("source_hash"):
-            return _structured_error("SPRINT_SOURCE_CHANGED_AFTER_PREVIEW", "source hash differs from preview")
         current = _wiki_content(prepared["client"].phriction.get_document_info(prepared["wiki_path"]))
         if _content_hash(current) != prepared["wiki_hash"]:
             return _structured_error("SPRINT_WIKI_CHANGED_AFTER_PREVIEW", "Phriction page changed after preview")

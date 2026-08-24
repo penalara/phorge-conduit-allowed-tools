@@ -1,4 +1,3 @@
-import hashlib
 import unittest
 from unittest.mock import Mock
 
@@ -65,11 +64,10 @@ class SprintWorkflowTest(unittest.TestCase):
         self.client.maniphest.edit_task.side_effect = edit
 
     def _create(self, source_path, source_text, config, tags):
-        source_hash = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
-        preview = self.preview(source_path, source_text, source_hash, config, tags)
+        preview = self.preview(source_path, source_text, config, tags)
         if not preview.get("success"):
             return preview
-        return self.apply_preview(preview["previewId"], source_hash)
+        return self.apply_preview(preview["previewId"])
 
     def _users(self, constraints=None, **kwargs):
         constraints = constraints or {}
@@ -139,6 +137,15 @@ class SprintWorkflowTest(unittest.TestCase):
         self.assertTrue(result["success"])
         content = self.client.phriction.create_document.call_args.kwargs["content"]
         self.assertIn("<td>1.5h</td>", content)
+
+    def test_new_task_uses_the_optional_description(self):
+        result = self.create(
+            "one.txt", "# Sprint 1\nBuild;;@ana;;;;Detailed work", self.config, self.tags
+        )
+
+        self.assertTrue(result["success"])
+        transactions = self.client.maniphest.edit_task.call_args.kwargs["transactions"]
+        self.assertEqual(transactions[1], {"type": "description", "value": "Detailed work"})
 
     def test_new_task_without_explicit_tags_uses_default_and_owner_sprint_tag(self):
         result = self.create(
@@ -246,7 +253,7 @@ class SprintWorkflowTest(unittest.TestCase):
             ]
         )
         result = self.create(
-            "one.txt", "# Sprint 1\nT7;;@ana;Normal;Demo;@bob", self.config, self.tags
+            "one.txt", "# Sprint 1\nT7;;@ana;Normal;Demo;@bob;Ignored", self.config, self.tags
         )
         self.assertTrue(result["success"])
         types = [

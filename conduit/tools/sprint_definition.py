@@ -3,11 +3,12 @@
 The input format has a header followed by semicolon-separated task rows::
 
     # Sprint 17
-    Task title;2h;@owner;Normal;Project[Column];@subscriber
+    Task title;2h;@owner;Normal;Project[Column];@subscriber;Description
 
 Rows contain, in order, a task identifier or new title, estimation, owner,
-priority, projects, and subscribers. The module deliberately has no
-Conduit dependencies; orchestration code can enrich the mutable row fields.
+    priority, projects, subscribers, and an optional description. The module
+    deliberately has no Conduit dependencies; orchestration code can enrich
+    the mutable row fields.
 """
 
 from dataclasses import dataclass, field
@@ -61,6 +62,7 @@ class SprintTaskRow:
     estimation_hours: Optional[Decimal]
     owner: Optional[str]
     priority: Optional[str]
+    description: Optional[str] = None
     subscribers: List[str] = field(default_factory=list)
     projects: List[SprintProject] = field(default_factory=list)
     existing_title: Optional[str] = None
@@ -239,14 +241,14 @@ def parse_sprint_definition(text: str) -> SprintDefinition:
 
         content = physical_line[len(prefix) :]
         columns = [part.strip() for part in content.split(";")]
-        if len(columns) > 6:
+        if len(columns) > 7:
             errors.append(
                 SprintParseError(
-                    line_number, "Task row cannot have more than six columns"
+                    line_number, "Task row cannot have more than seven columns"
                 )
             )
-            columns = columns[:6]
-        columns.extend([""] * (6 - len(columns)))
+            columns = columns[:7]
+        columns.extend([""] * (7 - len(columns)))
         (
             task_value,
             estimation_value,
@@ -254,6 +256,7 @@ def parse_sprint_definition(text: str) -> SprintDefinition:
             priority_value,
             project_value,
             subscriber_value,
+            description_value,
         ) = columns
 
         title = None
@@ -303,6 +306,7 @@ def parse_sprint_definition(text: str) -> SprintDefinition:
             estimation_hours=estimation_hours,
             owner=owner,
             priority=priority_value or None,
+            description=(description_value or None) if title is not None else None,
             subscribers=subscribers,
             projects=projects,
         )

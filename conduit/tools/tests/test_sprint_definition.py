@@ -68,13 +68,24 @@ def test_short_rows_are_padded_and_six_columns_are_parsed():
         SprintProject("Core"),
         SprintProject("Delivery", "Doing"),
     ]
+    assert row.description is None
 
 
-def test_more_than_six_columns_is_reported_without_raising():
-    result = parse_sprint_definition("# Sprint 1\nTask;;@alice;;;;extra")
+def test_seventh_column_is_a_description_for_new_tasks_only():
+    result = parse_sprint_definition(
+        "# Sprint 1\nTask;;@alice;;;;Task description\nT123;;;;;;Ignored"
+    )
+
+    assert result.is_valid
+    assert result.rows[0].description == "Task description"
+    assert result.rows[1].description is None
+
+
+def test_more_than_seven_columns_is_reported_without_raising():
+    result = parse_sprint_definition("# Sprint 1\nTask;;@alice;;;;extra;more")
 
     assert len(result.rows) == 1
-    assert any("more than six" in error.message for error in result.errors)
+    assert any("more than seven" in error.message for error in result.errors)
 
 
 @pytest.mark.parametrize("identifier", ["T0", "t123", "T123abc"])

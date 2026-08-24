@@ -203,9 +203,9 @@ and performs one `maniphest.edit` only after completing its read precheck.
 
 `phorge_preview_sprint` validates and resolves an already-loaded sprint
 definition without writes and returns a single-use preview id, wiki metadata,
-and Remarkup. Pass that id to `phorge_create_sprint` to apply the prepared
-plan; it checks
-that the wiki has not changed before any task write. Clients provide the
+and Remarkup. When the preview reports an existing wiki, clients must warn and
+obtain explicit confirmation before calling `phorge_create_sprint`, which
+replaces the entire document. Clients provide the
 editable project and owner-tag configuration; the MCP server does not read
 OpenCode skill files.
 
@@ -488,8 +488,9 @@ usar `pha_task_start`, permite estos metodos Conduit internos:
 
 `phorge_preview_sprint` valida y resuelve una definicion de sprint ya cargada
 sin escrituras y devuelve un id de preview de un solo uso, metadatos de wiki y
-Remarkup. Pasa ese id a `phorge_create_sprint` para aplicar el plan preparado; antes de escribir
-tareas comprueba que la wiki no haya cambiado. El cliente proporciona la
+Remarkup. Si la preview informa de una wiki existente, el cliente debe advertir
+y obtener confirmacion explicita antes de llamar a `phorge_create_sprint`, que
+reemplaza el documento completo. El cliente proporciona la
 configuracion editable de proyecto y tags por owner; el MCP no lee archivos
 internos de Skills de OpenCode.
 

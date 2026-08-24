@@ -1,11 +1,9 @@
 # ruff: noqa: FA100
 """Atomic-precheck workflow for creating a sprint from a text definition."""
 
-import hashlib
 import re
 import secrets
 import threading
-from html import unescape
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -112,52 +110,10 @@ def _task_attachment(task: Dict[str, Any], name: str, key: str) -> List[str]:
     return value if isinstance(value, list) else []
 
 
-def _content_hash(content: Optional[str]) -> str:
-    return hashlib.sha256((content if content is not None else "<absent>").encode("utf-8")).hexdigest()
-
-
 def _structured_error(code: str, message: str) -> dict:
     return {"success": False, "ok": False, "phase": "precheck", "error_code": code,
             "error": message, "errors": [{"line": 0, "code": code, "message": message}],
             "mutationsAttempted": 0}
-
-
-def _wiki_content(info: Any) -> Optional[str]:
-    """Normalise phriction.info's version-dependent response shape."""
-    if not isinstance(info, dict):
-        return None
-    for candidate in (info, info.get("result"), info.get("document")):
-        if isinstance(candidate, dict):
-            for key in ("content", "text"):
-                if isinstance(candidate.get(key), str):
-                    return candidate[key]
-    return None
-
-
-def _wiki_protection(content: Optional[str]) -> Tuple[List[Dict[str, str]], bool]:
-    if content is None or not content.strip():
-        return [], False
-    tables = re.findall(r"<table\b[^>]*>(.*?)</table>", content, re.IGNORECASE | re.DOTALL)
-    if not tables:
-        return [], True
-    protected: List[Dict[str, str]] = []
-    recognised = False
-    for table in tables:
-        rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", table, re.IGNORECASE | re.DOTALL)
-        if not rows:
-            continue
-        cells = [unescape(re.sub(r"<[^>]+>", "", value)).strip() for value in re.findall(r"<t[hd]\b[^>]*>(.*?)</t[hd]>", rows[0], re.IGNORECASE | re.DOTALL)]
-        if "Tiempo real" not in cells:
-            continue
-        recognised = True
-        actual_index = cells.index("Tiempo real")
-        notes_index = cells.index("Observaciones") if "Observaciones" in cells else None
-        for row in rows[1:]:
-            values = [unescape(re.sub(r"<[^>]+>", "", value)).strip() for value in re.findall(r"<td\b[^>]*>(.*?)</td>", row, re.IGNORECASE | re.DOTALL)]
-            for label, index in (("Tiempo real", actual_index), ("Observaciones", notes_index)):
-                if index is not None and index < len(values) and values[index]:
-                    protected.append({"field": label, "value": values[index]})
-    return protected, not recognised
 
 
 def _execute_sprint(plan: Dict[str, Any]) -> dict:
@@ -663,10 +619,7 @@ def register_sprint_tools(
 
         base = project_config["wikiBasePath"].strip("/")
         wiki_path = f"{base}/{definition.slug}/" if base else f"{definition.slug}/"
-        wiki_info = client.phriction.get_document_info(wiki_path)
-        wiki_content = _wiki_content(wiki_info)
-        wiki_exists = wiki_content is not None
-        protected_values, format_unknown = _wiki_protection(wiki_content)
+        wiki_exists = bool(client.phriction.get_document_info(wiki_path))
         if errors:
             return _validation(errors)
         return {
@@ -675,8 +628,6 @@ def register_sprint_tools(
             "source_path": source_path, "project_config": dict(project_config),
             "owner_sprint_tags": dict(owner_sprint_tags),
             "wiki_path": wiki_path, "wiki_exists": wiki_exists,
-            "wiki_hash": _content_hash(wiki_content),
-            "protected_values": protected_values, "format_unknown": format_unknown,
         }
 
     @mcp.tool()
@@ -694,11 +645,8 @@ def register_sprint_tools(
         return {
             "success": True, "ok": True, "previewId": preview_id,
             "wiki": {"path": prepared["wiki_path"], "title": definition.name,
-                     "exists": prepared["wiki_exists"]},
+                      "exists": prepared["wiki_exists"]},
             "remarkup": render_sprint_remarkup(definition, preview=True),
-            "requiresOverwriteConfirmation": bool(prepared["protected_values"] or prepared["format_unknown"]),
-            "protectedValues": prepared["protected_values"],
-            "formatUnknown": prepared["format_unknown"],
         }
 
     @mcp.tool()
@@ -709,9 +657,6 @@ def register_sprint_tools(
             prepared = previews.pop(preview_id, None)
         if prepared is None:
             return _structured_error("SPRINT_PREVIEW_NOT_FOUND", "Preview was not found or was already used")
-        current = _wiki_content(prepared["client"].phriction.get_document_info(prepared["wiki_path"]))
-        if _content_hash(current) != prepared["wiki_hash"]:
-            return _structured_error("SPRINT_WIKI_CHANGED_AFTER_PREVIEW", "Phriction page changed after preview")
         return _execute_sprint(prepared)
 
 

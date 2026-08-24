@@ -72,34 +72,17 @@ class SprintPreviewTest(unittest.TestCase):
         second = self.create(preview["previewId"])
         self.assertEqual(second["error_code"], "SPRINT_PREVIEW_NOT_FOUND")
 
-    def test_wiki_guard_aborts_before_task_writes(self):
-        preview = self._preview()
-        self.client.phriction.get_document_info.return_value = {"content": "changed"}
-        result = self.create(preview["previewId"])
-        self.assertEqual(result["error_code"], "SPRINT_WIKI_CHANGED_AFTER_PREVIEW")
-        self.client.maniphest.edit_task.assert_not_called()
-
     def test_existing_wiki_is_edited_not_created(self):
         self.client.phriction.get_document_info.return_value = {
-            "content": "<table><tr><th>Tiempo real</th></tr></table>"
+            "content": "arbitrary existing content"
         }
         preview = self._preview()
+        self.assertTrue(preview["wiki"]["exists"])
         result = self.create(preview["previewId"])
         self.assertTrue(result["success"])
         self.client.phriction.edit_document.assert_called_once()
         self.client.phriction.create_document.assert_not_called()
-
-    def test_protected_wiki_values_and_unknown_format_request_confirmation(self):
-        self.client.phriction.get_document_info.return_value = {
-            "content": "<table><tr><th>Título tarea</th><th>Tiempo real</th><th>Observaciones</th></tr><tr><td>A</td><td>2h</td><td>Note</td></tr></table>"
-        }
-        protected = self._preview()
-        self.assertTrue(protected["requiresOverwriteConfirmation"])
-        self.assertEqual({item["value"] for item in protected["protectedValues"]}, {"2h", "Note"})
-        self.client.phriction.get_document_info.return_value = {"content": "unrecognised"}
-        unknown = self._preview("# Sprint 2\nBuild;;@ana")
-        self.assertTrue(unknown["formatUnknown"])
-        self.assertTrue(unknown["requiresOverwriteConfirmation"])
+        self.client.phriction.get_document_info.assert_called_once()
 
 
 if __name__ == "__main__":

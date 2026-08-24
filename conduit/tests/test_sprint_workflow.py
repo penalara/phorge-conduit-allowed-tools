@@ -325,6 +325,16 @@ class SprintWorkflowTest(unittest.TestCase):
                 {"name": "<CONFIGURAR>", "wikiBasePath": "x", "defaultTag": "Demo"},
                 self.tags,
             ),
+            (
+                "one.txt",
+                "# Sprint 1\nBuild;;@ana",
+                {
+                    "name": "Demo",
+                    "wikiBasePath": "/teams/demo/",
+                    "defaultTag": "Demo",
+                },
+                self.tags,
+            ),
             ("one.txt", "# Sprint 1\nBuild;;@ana", self.config, {"ana": "Sprint Ana"}),
         ]
         for args in cases:
@@ -427,6 +437,26 @@ class SprintWorkflowTest(unittest.TestCase):
                 result = self.create("one.txt", source, self.config, self.tags)
                 self._assert_zero_writes(result)
                 self.assertIn(code, [error["code"] for error in result["errors"]])
+
+    def test_priority_requires_exact_english_visible_name(self):
+        for priority in ["Alta", "high"]:
+            with self.subTest(priority=priority):
+                self.client.reset_mock()
+                self.client.user.search.side_effect = self._users
+                self.client.project.search_projects.side_effect = (
+                    self._projects
+                )
+                result = self.create(
+                    "one.txt",
+                    "# Sprint 1\nBuild;;@ana;%s" % priority,
+                    self.config,
+                    self.tags,
+                )
+                self._assert_zero_writes(result)
+                self.assertIn(
+                    "PRIORITY_NOT_FOUND",
+                    [error["code"] for error in result["errors"]],
+                )
 
     def test_ambiguous_project_and_column_are_zero_write_prechecks(self):
         cases = [

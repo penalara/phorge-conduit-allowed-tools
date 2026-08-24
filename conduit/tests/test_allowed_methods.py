@@ -13,6 +13,34 @@ from conduit.allowed_methods import (
     resolve_config_path,
     write_allowed_methods,
 )
+from conduit.client import PhabricatorAPIError, PhabricatorClient
+from conduit.client.base import BasePhabricatorClient
+from conduit.client.diffusion import DiffusionClient
+from conduit.client.project import ProjectClient
+
+
+REFERENCE_ALLOWED_METHODS = [
+    "maniphest.createtask",
+    "maniphest.query",
+    "maniphest.search",
+    "maniphest.edit",
+    "transaction.search",
+    "maniphest.status.search",
+    "maniphest.priority.search",
+    "user.search",
+    "user.query",
+    "project.search",
+    "project.column.search",
+    "phid.query",
+    "feed.query",
+    "phriction.content.search",
+    "phriction.create",
+    "phriction.document.edit",
+    "phriction.document.search",
+    "phriction.edit",
+    "phriction.history",
+    "phriction.info",
+]
 
 
 class TestAllowedMethodsConfiguration(unittest.TestCase):
@@ -125,3 +153,164 @@ class TestDynamicToolRegistration(unittest.TestCase):
         result = registered[0](params="not-an-object")
         self.assertFalse(result["success"])
         self.assertEqual(result["error_code"], "VALIDATION_ERROR")
+
+
+class TestClientAllowlistBoundary(unittest.TestCase):
+    def _write_config(self, directory, methods=REFERENCE_ALLOWED_METHODS):
+        path = Path(directory) / "conduit-allowed-methods.json"
+        path.write_text(
+            json.dumps({"allowed_tools": methods}), encoding="utf-8"
+        )
+        return path
+
+    def test_direct_client_loads_effective_allowlist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write_config(directory)
+            response = Mock()
+            response.raise_for_status.return_value = None
+            response.json.return_value = {
+                "result": {"ok": True},
+                "error_code": None,
+            }
+            http_client = Mock()
+            http_client.post.return_value = response
+
+            with patch.dict(os.environ, {CONFIG_ENV_VAR: str(path)}):
+                client = BasePhabricatorClient(
+                    "https://phorge.example/api/",
+                    "api-token",
+                    http_client=http_client,
+                )
+
+            for method in REFERENCE_ALLOWED_METHODS:
+                self.assertEqual(client._make_request(method), {"ok": True})
+
+            self.assertEqual(
+                http_client.post.call_count, len(REFERENCE_ALLOWED_METHODS)
+            )
+
+    def test_methods_outside_effective_allowlist_are_denied_before_http(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write_config(directory)
+            http_client = Mock()
+            with patch.dict(os.environ, {CONFIG_ENV_VAR: str(path)}):
+                client = BasePhabricatorClient(
+                    "https://phorge.example/api/",
+                    "api-token",
+                    http_client=http_client,
+                )
+
+            for method in [
+                "project.edit",
+                "diffusion.repository.edit",
+                "differential.revision.edit",
+                "conduit.query",
+            ]:
+                with self.subTest(method=method):
+                    with self.assertRaises(PhabricatorAPIError) as raised:
+                        client._make_request(method)
+                    self.assertEqual(
+                        raised.exception.error_code, "METHOD_NOT_ALLOWED"
+                    )
+
+            http_client.post.assert_not_called()
+
+    def test_previous_integration_mutations_are_denied_before_http(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write_config(directory)
+            http_client = Mock()
+            with patch.dict(os.environ, {CONFIG_ENV_VAR: str(path)}):
+                project = ProjectClient(
+                    "https://phorge.example/api/",
+                    "api-token",
+                    http_client=http_client,
+                )
+                diffusion = DiffusionClient(
+                    "https://phorge.example/api/",
+                    "api-token",
+                    http_client=http_client,
+                )
+
+            with self.assertRaises(PhabricatorAPIError) as project_error:
+                project.create_project("Must not be created")
+            with self.assertRaises(PhabricatorAPIError) as repository_error:
+                diffusion.create_repository("must-not-be-created")
+
+            self.assertEqual(
+                project_error.exception.error_code, "METHOD_NOT_ALLOWED"
+            )
+            self.assertEqual(
+                repository_error.exception.error_code, "METHOD_NOT_ALLOWED"
+            )
+            http_client.post.assert_not_called()
+
+    def test_missing_effective_allowlist_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.json"
+            with patch.dict(os.environ, {CONFIG_ENV_VAR: str(missing)}):
+                with self.assertRaises(FileNotFoundError):
+                    BasePhabricatorClient(
+                        "https://phorge.example/api/", "api-token"
+                    )
+
+    def test_setting_none_is_deny_all(self):
+        client = BasePhabricatorClient(
+            "https://phorge.example/api/",
+            "api-token",
+            http_client=Mock(),
+            allowed_methods=["project.search"],
+        )
+        client.set_allowed_methods(None)
+
+        with self.assertRaises(PhabricatorAPIError) as raised:
+            client._make_request("project.search")
+
+        self.assertEqual(raised.exception.error_code, "METHOD_NOT_ALLOWED")
+        client.client.post.assert_not_called()
+
+    def test_unified_client_applies_explicit_allowlist_to_every_module(self):
+        client = PhabricatorClient(
+            "https://phorge.example/api/",
+            "api-token",
+            allowed_methods=REFERENCE_ALLOWED_METHODS,
+        )
+        try:
+            for module in [
+                client.maniphest,
+                client.differential,
+                client.diffusion,
+                client.project,
+                client.user,
+                client.file,
+                client.conduit,
+                client.harbormaster,
+                client.paste,
+                client.phriction,
+                client.remarkup,
+                client.macro,
+                client.flag,
+                client.phid,
+            ]:
+                self.assertEqual(
+                    module._allowed_methods, frozenset(REFERENCE_ALLOWED_METHODS)
+                )
+        finally:
+            client.close()
+
+    def test_unrestricted_mode_is_explicit_and_cannot_mix_with_allowlist(self):
+        client = BasePhabricatorClient(
+            "https://phorge.example/api/",
+            "api-token",
+            http_client=Mock(),
+            allow_unrestricted=True,
+        )
+        self.assertIsNone(client._allowed_methods)
+
+        with self.assertRaises(ValueError):
+            BasePhabricatorClient(
+                "https://phorge.example/api/",
+                "api-token",
+                http_client=Mock(),
+                allowed_methods=["conduit.query"],
+                allow_unrestricted=True,
+            )

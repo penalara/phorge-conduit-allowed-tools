@@ -56,6 +56,17 @@ def _exact(items: List[Dict[str, Any]], name: str) -> List[Dict[str, Any]]:
     ]
 
 
+def _exact_visible_name(
+    items: List[Dict[str, Any]], name: str
+) -> List[Dict[str, Any]]:
+    """Match an installation-provided name without aliases or translation."""
+
+    wanted = name.strip()
+    return [
+        item for item in items if (_fields_name(item) or "").strip() == wanted
+    ]
+
+
 def _unique(values: List[str]) -> List[str]:
     return list(dict.fromkeys(values))
 
@@ -414,7 +425,7 @@ def register_sprint_tools(
         )
         priorities: Dict[str, str] = {}
         for requested in requested_priorities:
-            matches = _exact(
+            matches = _exact_visible_name(
                 priority_items if isinstance(priority_items, list) else [], requested
             )
             keywords = matches[0].get("keywords") if len(matches) == 1 else None

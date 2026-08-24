@@ -37,6 +37,19 @@ def test_header_must_be_the_first_physical_line():
     assert "First physical line" in result.errors[0].message
 
 
+@pytest.mark.parametrize(
+    "header", ["#  Sprint 17", "#\tSprint 17", "## Sprint 17"]
+)
+def test_rejects_unsupported_header_spacing(header):
+    result = parse_sprint_definition("%s\nTask;;@alice" % header)
+
+    assert not result.is_valid
+    assert result.name is None
+    assert any(
+        "First physical line" in error.message for error in result.errors
+    )
+
+
 def test_short_rows_are_padded_and_six_columns_are_parsed():
     result = parse_sprint_definition(
         "# Sprint Alfa\nCreate report;1.5h;@alice;High;"

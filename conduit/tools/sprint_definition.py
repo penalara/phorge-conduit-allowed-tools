@@ -20,7 +20,7 @@ from typing import Dict, List, Optional, Tuple
 
 TASK_IDENTIFIER_RE = re.compile(r"^T[1-9][0-9]*$")
 _TASK_LIKE_RE = re.compile(r"^t[0-9]", re.IGNORECASE)
-_HEADER_RE = re.compile(r"^#(?!#)\s?(.+?)\s*$")
+_HEADER_RE = re.compile(r"^#(?!#) ?(\S(?:.*\S)?)\s*$")
 _ESTIMATION_RE = re.compile(r"^(?:[0-9]+(?:\.[0-9]+)?)([hD])$")
 _USERNAME_RE = re.compile(r"^@[A-Za-z0-9._-]+$")
 _PROJECT_RE = re.compile(r"^([^\[\]]+?)(?:\[([^\[\]]+)\])?$")

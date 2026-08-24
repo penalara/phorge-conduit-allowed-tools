@@ -163,6 +163,12 @@ Every entry in `allowed_tools` becomes one MCP tool with the same method name. P
 
 The method name is fixed when the server starts. Tool callers cannot override it, API tokens, or Conduit transport parameters.
 
+The same allowlist is loaded by direct Python clients. Methods outside it fail
+locally with `METHOD_NOT_ALLOWED` before any HTTP request. A missing or invalid
+configuration is fail-closed. Only the administrative `--init-tools-config`
+flow uses an explicit unrestricted client to call `conduit.query` and create
+the initial configuration.
+
 ### Typed Tools
 
 The server also registers typed high-level tools with names such as `pha_*`.
@@ -191,6 +197,45 @@ and performs one `maniphest.edit` only after completing its read precheck.
     "project.search",
     "project.column.search",
     "maniphest.edit"
+  ]
+}
+```
+
+`phorge_create_sprint` creates or patches the tasks in an already-loaded
+sprint definition and creates its Phriction page only after a complete read
+precheck and successful task writes. Clients provide the editable project and
+owner-tag configuration; the MCP server does not read OpenCode skill files.
+
+```json
+{
+  "source_path": "sprints/sprint-17.md",
+  "source_text": "# Sprint 17\nBuild login;;@alice;High;Backend[Doing]",
+  "project_config": {
+    "name": "Team",
+    "wikiBasePath": "projects/team/sprints/",
+    "defaultTag": "Team"
+  },
+  "owner_sprint_tags": {
+    "@alice": "Sprint Alice"
+  }
+}
+```
+
+`wikiBasePath` must be a safe relative Phriction path. Priorities must use the
+exact English visible name returned by Phorge, such as `High`, `Normal`, or
+`Low`. To use this tool, allow these underlying Conduit methods:
+
+```json
+{
+  "allowed_tools": [
+    "maniphest.search",
+    "maniphest.priority.search",
+    "maniphest.edit",
+    "user.search",
+    "project.search",
+    "project.column.search",
+    "phriction.document.search",
+    "phriction.create"
   ]
 }
 ```
@@ -386,6 +431,13 @@ Cada entrada de `allowed_tools` se convierte en una herramienta MCP con el mismo
 
 El metodo queda fijado al iniciar el servidor. Quien invoca una herramienta no puede modificar el metodo, los tokens API ni parametros de transporte Conduit.
 
+Los clientes Python directos cargan la misma allowlist. Los metodos que no
+esten incluidos fallan localmente con `METHOD_NOT_ALLOWED` antes de realizar
+ninguna peticion HTTP. Una configuracion ausente o invalida aplica fail-closed.
+Solo el flujo administrativo `--init-tools-config` usa un cliente sin
+restricciones de forma explicita para llamar a `conduit.query` y crear la
+configuracion inicial.
+
 ### Herramientas Tipadas
 
 El servidor tambien registra herramientas tipadas de alto nivel con nombres
@@ -416,6 +468,46 @@ usar `pha_task_start`, permite estos metodos Conduit internos:
     "project.search",
     "project.column.search",
     "maniphest.edit"
+  ]
+}
+```
+
+`phorge_create_sprint` crea o parchea las tareas de una definicion de sprint
+ya cargada y solo crea su pagina Phriction despues de un precheck completo de
+lectura y de completar correctamente las escrituras de tareas. El cliente
+proporciona la configuracion editable de proyecto y tags por owner; el MCP no
+lee archivos internos de Skills de OpenCode.
+
+```json
+{
+  "source_path": "sprints/sprint-17.md",
+  "source_text": "# Sprint 17\nCrear login;;@alice;High;Backend[Doing]",
+  "project_config": {
+    "name": "Equipo",
+    "wikiBasePath": "projects/equipo/sprints/",
+    "defaultTag": "Equipo"
+  },
+  "owner_sprint_tags": {
+    "@alice": "Sprint Alice"
+  }
+}
+```
+
+`wikiBasePath` debe ser una ruta relativa segura de Phriction. Las prioridades
+deben usar el nombre visible exacto en ingles devuelto por Phorge, como `High`,
+`Normal` o `Low`. Para usar esta herramienta, permite estos metodos Conduit:
+
+```json
+{
+  "allowed_tools": [
+    "maniphest.search",
+    "maniphest.priority.search",
+    "maniphest.edit",
+    "user.search",
+    "project.search",
+    "project.column.search",
+    "phriction.document.search",
+    "phriction.create"
   ]
 }
 ```

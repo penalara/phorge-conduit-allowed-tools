@@ -57,7 +57,8 @@ class ConduitApp:
         self.use_sse = use_sse
         self.mcp = FastMCP("Conduit")
         self._client = None
-        self._allowed_methods = None
+        # Deny all until register_tools applies the administrator configuration.
+        self._allowed_methods = ()
 
     def get_client(self):
         """Get or create a Phabricator client instance."""
@@ -80,8 +81,8 @@ class ConduitApp:
                 http_token,
                 proxy=self.config.proxy,
                 disable_cert_verify=self.config.disable_cert_verify,
+                allowed_methods=self._allowed_methods,
             )
-            client.set_allowed_methods(self._allowed_methods)
             return client
 
         # For stdio mode, use cached client (backward compatibility)
@@ -96,8 +97,8 @@ class ConduitApp:
             self.config.token,
             proxy=self.config.proxy,
             disable_cert_verify=self.config.disable_cert_verify,
+            allowed_methods=self._allowed_methods,
         )
-        self._client.set_allowed_methods(self._allowed_methods)
         return self._client
 
     def call_method(self, method, params):
@@ -227,6 +228,7 @@ def main():
                 config.token,
                 proxy=config.proxy,
                 disable_cert_verify=config.disable_cert_verify,
+                allow_unrestricted=True,
             )
             try:
                 methods = methods_from_conduit_query(client.conduit.query_methods())

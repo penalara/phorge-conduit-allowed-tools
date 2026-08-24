@@ -324,7 +324,11 @@ def parse_sprint_definition(text: str) -> SprintDefinition:
     )
 
 
-def render_sprint_remarkup(definition: SprintDefinition, preview: bool = False) -> str:
+def render_sprint_remarkup(
+    definition: SprintDefinition,
+    preview: bool = False,
+    owner_sprint_tags: Optional[Dict[str, str]] = None,
+) -> str:
     """Render sprint rows as HTML Remarkup grouped by final owner.
 
     Owner groups follow the first appearance of each resolved owner.  No sprint
@@ -332,6 +336,7 @@ def render_sprint_remarkup(definition: SprintDefinition, preview: bool = False) 
     Only parent relationships declared by the sprint document are represented.
     """
 
+    owner_sprint_tags = owner_sprint_tags or {}
     groups: Dict[str, List[SprintTaskRow]] = {}
     order: List[str] = []
     for row in definition.rows:
@@ -380,7 +385,11 @@ def render_sprint_remarkup(definition: SprintDefinition, preview: bool = False) 
 
     chunks: List[str] = []
     for owner in order:
-        chunks.append("== @%s ==" % escape(owner))
+        sprint_tag = owner_sprint_tags.get("@" + owner)
+        heading = "@%s" % escape(owner)
+        if sprint_tag:
+            heading += " : %s" % escape(sprint_tag)
+        chunks.append("== %s ==" % heading)
         chunks.append("<table>")
         chunks.append(
             "<tr><th>Título tarea</th><th>Código</th><th>Estimación</th>"

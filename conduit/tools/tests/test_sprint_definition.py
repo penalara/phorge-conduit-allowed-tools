@@ -266,6 +266,18 @@ def test_render_groups_by_owner_only_and_does_not_add_subscriber_section():
     assert "== @bob ==" not in rendered
 
 
+def test_render_includes_the_configured_personal_sprint_tag_in_owner_heading():
+    definition = SprintDefinition(
+        "Sprint 1", "sprint-1", [_render_row(0, "alice", "T1", "Task")]
+    )
+
+    rendered = render_sprint_remarkup(
+        definition, owner_sprint_tags={"@alice": "Sprint Alice"}
+    )
+
+    assert "== @alice : Sprint Alice ==" in rendered
+
+
 def test_render_escapes_all_dynamic_html_and_uses_resolved_title():
     row = _render_row(0, "a&b", "T1<script>", "new <title>")
     row.existing_title = "resolved <title>"

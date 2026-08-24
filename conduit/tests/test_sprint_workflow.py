@@ -127,7 +127,7 @@ class SprintWorkflowTest(unittest.TestCase):
         )
         self.assertEqual(len(result["created"]), 1)
         content = self.client.phriction.create_document.call_args.kwargs["content"]
-        self.assertIn("== @ana ==", content)
+        self.assertIn("== @ana : Sprint Ana ==", content)
 
     def test_new_task_estimate_is_rendered_in_phriction(self):
         result = self.create(
@@ -375,14 +375,20 @@ class SprintWorkflowTest(unittest.TestCase):
         self.assertTrue(result["success"])
         self.client.phriction.edit_document.assert_called_once()
 
-    def test_missing_owner_sprint_tag_map_is_a_zero_write_precheck(self):
+    def test_missing_owner_sprint_tag_uses_default_tag_and_warns(self):
         result = self.create(
-            "one.txt", "# Sprint 1\nBuild;;@ana", self.config, {"@bob": "Sprint Bob"}
+            "one.txt", "# Sprint 1\nBuild;;@ana;;Demo", self.config, {"@bob": "Sprint Bob"}
         )
 
-        self._assert_zero_writes(result)
-        self.assertIn(
-            "MISSING_SPRINT_TAG", [error["code"] for error in result["errors"]]
+        self.assertTrue(result["success"])
+        transactions = self.client.maniphest.edit_task.call_args.kwargs["transactions"]
+        projects = next(
+            item["value"] for item in transactions if item["type"] == "projects.add"
+        )
+        self.assertEqual(projects, ["PHID-PROJ-Demo"])
+        self.assertEqual(
+            result["warnings"],
+            ['No hay un proyecto personal de sprint configurado para @ana. Se ha utilizado el tag por defecto "Demo".'],
         )
 
     def test_missing_referenced_task_is_a_zero_write_precheck(self):

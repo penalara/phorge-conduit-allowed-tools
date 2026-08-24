@@ -252,7 +252,9 @@ each owner section. Its table columns are `Título tarea`, `Código`,
 parent-child relationship declared by source indentation: same-owner children
 use `⭢` once per visual level; a child whose
 direct parent has another owner is rendered as `(Hija de T123) Title` and
-starts a new visual root.
+starts a new visual root. An owner section uses `== @user : Sprint User ==`
+when `owner_sprint_tags` configures that user's exact personal sprint tag;
+otherwise it uses `== @user ==`.
 
 ### Security Notes
 
@@ -537,7 +539,9 @@ orden del documento dentro de cada seccion. Sus columnas son `Titulo tarea`,
 relacion padre-hija declarada mediante indentacion: las hijas del mismo owner
 usan `⭢` una vez por nivel visual; una hija
 cuyo padre directo tenga otro owner se muestra como `(Hija de T123) Titulo` y
-comienza una nueva raiz visual.
+comienza una nueva raiz visual. La seccion de un owner usa
+`== @usuario : Sprint Usuario ==` si `owner_sprint_tags` configura su tag de
+sprint personal exacto; si no, usa `== @usuario ==`.
 
 ### Notas De Seguridad
 

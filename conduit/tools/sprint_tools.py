@@ -124,6 +124,7 @@ def _execute_sprint(plan: Dict[str, Any]) -> dict:
     config = plan["project_config"]
     owner_sprint_tags = plan["owner_sprint_tags"]
     records: List[Dict[str, Any]] = []
+    warnings = plan["warnings"]
 
     def write_failure(
         error: PhabricatorAPIError,
@@ -151,12 +152,17 @@ def _execute_sprint(plan: Dict[str, Any]) -> dict:
             "failedOperation": failed_operation,
             "pendingTasks": [row.line_number for row in pending_rows],
             "tasks": records,
+            "warnings": warnings,
             **_record_groups(records),
         }
 
     for row in definition.rows:
         explicit = [item.name for item in row.projects]
-        sprint_tag = owner_sprint_tags.get("@" + row.owner, "") if row.owner else ""
+        sprint_tag = (
+            owner_sprint_tags.get("@" + row.owner, config["defaultTag"])
+            if row.owner
+            else ""
+        )
         names = (explicit or [config["defaultTag"]]) if row.title is not None else explicit
         if row.owner and sprint_tag:
             names = _unique(names + [sprint_tag])
@@ -190,7 +196,7 @@ def _execute_sprint(plan: Dict[str, Any]) -> dict:
             row.final_task_identifier = "T%d" % task_id
             setattr(row, "_task_phid", task_phid)
         records.append({"line": row.line_number, "task": row.final_task_identifier, "title": row.existing_title or row.title, "status": "created" if row.title is not None else ("updated" if transactions else "unchanged"), "projects": project_data, "columns": column_data})
-    content = render_sprint_remarkup(definition)
+    content = render_sprint_remarkup(definition, owner_sprint_tags=owner_sprint_tags)
     try:
         if plan["wiki_exists"]:
             wiki = client.phriction.edit_document(path=plan["wiki_path"], title=definition.name, content=content)
@@ -204,7 +210,7 @@ def _execute_sprint(plan: Dict[str, Any]) -> dict:
             {"operation": "editWiki" if plan["wiki_exists"] else "createWiki"},
             [],
         )
-    return {"success": True, "ok": True, "sourcePath": plan["source_path"], "sprint": definition.name, "title": definition.name, "project": config, "wiki": {"path": plan["wiki_path"], "title": definition.name, "result": wiki}, "tasks": records, **_record_groups(records), "warnings": []}
+    return {"success": True, "ok": True, "sourcePath": plan["source_path"], "sprint": definition.name, "title": definition.name, "project": config, "wiki": {"path": plan["wiki_path"], "title": definition.name, "result": wiki}, "tasks": records, **_record_groups(records), "warnings": warnings}
 
 
 def register_sprint_tools(
@@ -496,16 +502,20 @@ def register_sprint_tools(
             else:
                 old_owners[phid] = username
 
+        warnings: List[str] = []
+        warned_owners = set()
         for row in definition.rows:
             if row.owner:
                 row.final_owner_username = row.owner
-                if "@" + row.owner not in owner_sprint_tags:
-                    _error(
-                        errors,
-                        row.line_number,
-                        "MISSING_SPRINT_TAG",
-                        f"No sprint tag configured for @{row.owner}",
+                owner_key = "@" + row.owner
+                if owner_key not in owner_sprint_tags and owner_key not in warned_owners:
+                    warnings.append(
+                        'No hay un proyecto personal de sprint configurado para {}. '
+                        'Se ha utilizado el tag por defecto "{}".'.format(
+                            owner_key, project_config["defaultTag"]
+                        )
                     )
+                    warned_owners.add(owner_key)
             else:
                 row.final_owner_username = old_owners.get(
                     getattr(row, "_existing_owner_phid", None)
@@ -555,7 +565,9 @@ def register_sprint_tools(
             if row.title is not None and not row.projects:
                 project_names.append(project_config["defaultTag"])
             if row.owner:
-                project_names.append(owner_sprint_tags.get("@" + row.owner, ""))
+                project_names.append(
+                    owner_sprint_tags.get("@" + row.owner, project_config["defaultTag"])
+                )
         projects: Dict[str, Dict[str, Any]] = {}
         for name in _unique([name for name in project_names if name]):
             found = read_all_pages(
@@ -576,7 +588,13 @@ def register_sprint_tools(
                         and name == project_config["defaultTag"]
                         and not row.projects
                     )
-                    or (row.owner and name == owner_sprint_tags.get("@" + row.owner))
+                    or (
+                        row.owner
+                        and name
+                        == owner_sprint_tags.get(
+                            "@" + row.owner, project_config["defaultTag"]
+                        )
+                    )
                 ] or [0]
                 for line in lines:
                     _error(
@@ -627,6 +645,7 @@ def register_sprint_tools(
             "priorities": priorities, "projects": projects, "columns": columns,
             "source_path": source_path, "project_config": dict(project_config),
             "owner_sprint_tags": dict(owner_sprint_tags),
+            "warnings": warnings,
             "wiki_path": wiki_path, "wiki_exists": wiki_exists,
         }
 
@@ -646,7 +665,9 @@ def register_sprint_tools(
             "success": True, "ok": True, "previewId": preview_id,
             "wiki": {"path": prepared["wiki_path"], "title": definition.name,
                       "exists": prepared["wiki_exists"]},
-            "remarkup": render_sprint_remarkup(definition, preview=True),
+            "remarkup": render_sprint_remarkup(
+                definition, preview=True, owner_sprint_tags=prepared["owner_sprint_tags"]
+            ),
         }
 
     @mcp.tool()

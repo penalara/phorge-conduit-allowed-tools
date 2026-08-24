@@ -116,10 +116,15 @@ def _content_hash(content: Optional[str]) -> str:
     return hashlib.sha256((content if content is not None else "<absent>").encode("utf-8")).hexdigest()
 
 
+def _canonical_source_text(source_text: str) -> str:
+    """Make source hashes independent of the platform line ending."""
+    return source_text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _source_hash_matches(source_text: Any, source_hash: Any) -> bool:
     return (isinstance(source_text, str) and isinstance(source_hash, str)
             and re.fullmatch(r"[0-9a-fA-F]{64}", source_hash) is not None
-            and hashlib.sha256(source_text.encode("utf-8")).hexdigest() == source_hash.lower())
+            and hashlib.sha256(_canonical_source_text(source_text).encode("utf-8")).hexdigest() == source_hash.lower())
 
 
 def _structured_error(code: str, message: str) -> dict:

@@ -68,6 +68,14 @@ class SprintPreviewTest(unittest.TestCase):
         self.assertEqual(result["error_code"], "SPRINT_SOURCE_HASH_MISMATCH")
         self.client.maniphest.search_tasks.assert_not_called()
 
+    def test_preview_accepts_a_canonical_hash_for_crlf_source_text(self):
+        text = "# Sprint 1\r\nBuild;;@ana"
+        canonical_hash = self._hash(text.replace("\r\n", "\n"))
+
+        result = self.preview("one.txt", text, canonical_hash, self.config, self.tags)
+
+        self.assertTrue(result["success"])
+
     def test_preview_id_is_single_use(self):
         preview = self._preview()
         result = self.create(preview["previewId"], self._hash("# Sprint 1\nBuild;;@ana"))

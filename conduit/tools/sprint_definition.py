@@ -12,6 +12,7 @@ Rows contain, in order, a task identifier or new title, estimation, owner,
 """
 
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from html import escape
 import re
@@ -25,6 +26,8 @@ _HEADER_RE = re.compile(r"^#(?!#) ?(\S(?:.*\S)?)\s*$")
 _ESTIMATION_RE = re.compile(r"^(?:[0-9]+(?:\.[0-9]+)?)([hD])$")
 _USERNAME_RE = re.compile(r"^@[A-Za-z0-9._-]+$")
 _PROJECT_RE = re.compile(r"^([^\[\]]+?)(?:\[([^\[\]]+)\])?$")
+_DATE_RANGE_RE = re.compile(r"^(\d{2}/\d{2}/\d{4})-(\d{2}/\d{2}/\d{4})$")
+_ESTIMATION_SUFFIX_RE = re.compile(r"\s\[(?:[0-9]+(?:\.[0-9]+)?)[hD]\]$")
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,9 @@ class SprintDefinition:
     slug: Optional[str]
     rows: List[SprintTaskRow] = field(default_factory=list)
     errors: List[SprintParseError] = field(default_factory=list)
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    workdays: Optional[int] = None
 
     @property
     def is_valid(self) -> bool:
@@ -183,6 +189,35 @@ def _parse_projects(
     return result
 
 
+def _workdays(start_date: date, end_date: date) -> int:
+    """Count Monday through Friday from start inclusive to end exclusive."""
+    count = 0
+    current = start_date
+    while current < end_date:
+        if current.weekday() < 5:
+            count += 1
+        current += timedelta(days=1)
+    return count
+
+
+def _parse_date_range(
+    value: str, line_number: int, errors: List[SprintParseError]
+) -> Tuple[Optional[date], Optional[date], Optional[int]]:
+    match = _DATE_RANGE_RE.fullmatch(value)
+    if not match:
+        return None, None, None
+    try:
+        start_date = datetime.strptime(match.group(1), "%d/%m/%Y").date()
+        end_date = datetime.strptime(match.group(2), "%d/%m/%Y").date()
+    except ValueError:
+        errors.append(SprintParseError(line_number, "Sprint dates must be valid dd/mm/yyyy values"))
+        return None, None, None
+    if end_date <= start_date:
+        errors.append(SprintParseError(line_number, "Sprint end date must be after start date"))
+        return None, None, None
+    return start_date, end_date, _workdays(start_date, end_date)
+
+
 def parse_sprint_definition(text: str) -> SprintDefinition:
     """Parse ``text`` without raising for user input errors.
 
@@ -221,6 +256,19 @@ def parse_sprint_definition(text: str) -> SprintDefinition:
     levels: Dict[int, int] = {}
     previous_level = 0
     start = (header_index + 1) if header_index is not None else len(lines)
+    start_date = None
+    end_date = None
+    workdays = None
+    date_line_index = next(
+        (index for index in range(start, len(lines)) if lines[index].strip()), None
+    )
+    if date_line_index is not None:
+        date_value = lines[date_line_index].strip()
+        start_date, end_date, workdays = _parse_date_range(
+            date_value, date_line_index + 1, errors
+        )
+        if _DATE_RANGE_RE.fullmatch(date_value):
+            start = date_line_index + 1
     for line_number, physical_line in enumerate(lines[start:], start=start + 1):
         if not physical_line.strip():
             continue
@@ -321,6 +369,9 @@ def parse_sprint_definition(text: str) -> SprintDefinition:
         slug=normalize_slug(name) if name is not None else None,
         rows=rows,
         errors=errors,
+        start_date=start_date,
+        end_date=end_date,
+        workdays=workdays,
     )
 
 
@@ -328,6 +379,7 @@ def render_sprint_remarkup(
     definition: SprintDefinition,
     preview: bool = False,
     owner_sprint_tags: Optional[Dict[str, str]] = None,
+    append_estimation_to_title: bool = False,
 ) -> str:
     """Render sprint rows as HTML Remarkup grouped by final owner.
 
@@ -370,7 +422,12 @@ def render_sprint_remarkup(
         return depth
 
     def rendered_title(row: SprintTaskRow) -> str:
-        title = escape(row.existing_title or row.title or "")
+        title = row.existing_title or row.title or ""
+        if append_estimation_to_title and row.estimation:
+            title = _ESTIMATION_SUFFIX_RE.sub("", title) + " [{}]".format(
+                row.estimation
+            )
+        title = escape(title)
         if row.parent_row_index is None:
             return title
         parent = definition.rows[row.parent_row_index]
@@ -384,6 +441,25 @@ def render_sprint_remarkup(
         return "⭢" * visual_depth(row) + " " + title
 
     chunks: List[str] = []
+    if definition.start_date is not None and definition.end_date is not None:
+        duration = definition.workdays or 0
+        duration_label = "{} {}".format(
+            duration, "día" if duration == 1 else "días"
+        )
+        chunks.extend(
+            [
+                "===Fechas===",
+                "",
+                "Inicio: " + definition.start_date.strftime("%d/%m/%Y"),
+                "Fin: " + definition.end_date.strftime("%d/%m/%Y"),
+                "",
+                "**Duraciones Sprint**",
+                "",
+                "Sprint: " + duration_label,
+            ]
+        )
+        chunks.extend("@{}: {}".format(owner, duration_label) for owner in order)
+        chunks.append("")
     for owner in order:
         sprint_tag = owner_sprint_tags.get("@" + owner)
         heading = "@%s" % escape(owner)

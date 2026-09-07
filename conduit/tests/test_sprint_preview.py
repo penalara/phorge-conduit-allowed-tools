@@ -27,7 +27,7 @@ class SprintPreviewTest(unittest.TestCase):
         register_sprint_tools(mcp, lambda: self.client)
         self.preview = mcp.tools["phorge_preview_sprint"]
         self.create = mcp.tools["phorge_create_sprint"]
-        self.config = {"name": "Demo", "wikiBasePath": "teams/demo", "defaultTag": "Demo"}
+        self.config = {"name": "Demo", "wikiBasePath": "teams/demo"}
         self.tags = {"@ana": "Sprint Ana"}
         self.client.maniphest.get_priority_info.return_value = {
             "data": [{"fields": {"name": "Normal"}, "keywords": ["normal"]}]
@@ -65,6 +65,14 @@ class SprintPreviewTest(unittest.TestCase):
 
         self.assertTrue(result["success"])
 
+    def test_preview_renders_titles_with_estimations_when_requested(self):
+        result = self.preview(
+            "one.txt", "# Sprint 1\nBuild;1D;@ana", self.config, self.tags, True, True
+        )
+
+        self.assertTrue(result["success"])
+        self.assertIn("Build [1D]", result["remarkup"])
+
     def test_preview_id_is_single_use(self):
         preview = self._preview()
         result = self.create(preview["previewId"])
@@ -83,6 +91,24 @@ class SprintPreviewTest(unittest.TestCase):
         self.client.phriction.edit_document.assert_called_once()
         self.client.phriction.create_document.assert_not_called()
         self.client.phriction.get_document_info.assert_called_once()
+
+    def test_tasks_only_preview_and_execution_do_not_use_phriction(self):
+        preview = self.preview(
+            "one.txt", "# Sprint 1\nBuild;;@ana", None, self.tags, False
+        )
+
+        self.assertTrue(preview["success"])
+        self.assertFalse(preview["publishWiki"])
+        self.assertNotIn("wiki", preview)
+        self.assertNotIn("remarkup", preview)
+        self.client.phriction.get_document_info.assert_not_called()
+
+        result = self.create(preview["previewId"])
+
+        self.assertTrue(result["success"])
+        self.assertFalse(result["publishedWiki"])
+        self.client.phriction.create_document.assert_not_called()
+        self.client.phriction.edit_document.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 """Pure unit tests for sprint definition parsing and rendering."""
 
 from decimal import Decimal
+from datetime import date
 
 import pytest
 
@@ -69,6 +70,32 @@ def test_short_rows_are_padded_and_six_columns_are_parsed():
         SprintProject("Delivery", "Doing"),
     ]
     assert row.description is None
+
+
+def test_parses_optional_dates_and_counts_weekdays_with_an_exclusive_end():
+    result = parse_sprint_definition(
+        "# Sprint Alfa\n\n01/01/2026-08/01/2026\nTask;;@alice"
+    )
+
+    assert result.is_valid
+    assert result.start_date == date(2026, 1, 1)
+    assert result.end_date == date(2026, 1, 8)
+    assert result.workdays == 5
+    assert result.rows[0].line_number == 4
+
+
+@pytest.mark.parametrize(
+    "date_range, message",
+    [
+        ("31/02/2026-02/03/2026", "valid dd/mm/yyyy"),
+        ("08/01/2026-08/01/2026", "must be after"),
+    ],
+)
+def test_rejects_invalid_sprint_dates(date_range, message):
+    result = parse_sprint_definition("# Sprint Alfa\n%s\nTask;;@alice" % date_range)
+
+    assert not result.is_valid
+    assert any(message in error.message for error in result.errors)
 
 
 def test_seventh_column_is_a_description_for_new_tasks_only():
@@ -264,6 +291,29 @@ def test_render_groups_by_owner_only_and_does_not_add_subscriber_section():
 
     assert rendered.count("== @alice ==") == 1
     assert "== @bob ==" not in rendered
+
+
+def test_render_includes_sprint_dates_and_each_assigned_owner_duration():
+    definition = SprintDefinition(
+        name="Sprint Dates",
+        slug="sprint-dates",
+        rows=[
+            _render_row(0, "alice", "T1", "First"),
+            _render_row(1, "bob", "T2", "Second"),
+        ],
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 8),
+        workdays=5,
+    )
+
+    rendered = render_sprint_remarkup(definition)
+
+    assert rendered.index("===Fechas===") < rendered.index("== @alice ==")
+    assert "Inicio: 01/01/2026" in rendered
+    assert "Fin: 08/01/2026" in rendered
+    assert "Sprint: 5 días" in rendered
+    assert "@alice: 5 días" in rendered
+    assert "@bob: 5 días" in rendered
 
 
 def test_render_includes_the_configured_personal_sprint_hashtag_in_owner_heading():

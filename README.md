@@ -202,12 +202,13 @@ and performs one `maniphest.edit` only after completing its read precheck.
 ```
 
 `phorge_preview_sprint` validates and resolves an already-loaded sprint
-definition without writes and returns a single-use preview id, wiki metadata,
-and Remarkup. When the preview reports an existing wiki, clients must warn and
+definition without writes. Set `publish_wiki` to `false` to process only tasks:
+that mode does not call Phriction and does not require `project_config`. With
+`publish_wiki` enabled, it returns a single-use preview id, wiki metadata, and
+Remarkup. When the preview reports an existing wiki, clients must warn and
 obtain explicit confirmation before calling `phorge_create_sprint`, which
-replaces the entire document. Clients provide the
-editable project and owner-tag configuration; the MCP server does not read
-OpenCode skill files.
+replaces the entire document. Clients provide the editable project and
+owner-tag configuration; the MCP server does not read OpenCode skill files.
 
 ```json
 {
@@ -215,12 +216,13 @@ OpenCode skill files.
   "source_text": "# Sprint 17\nBuild login;;@alice;High;Backend[Doing]",
   "project_config": {
     "name": "Team",
-    "wikiBasePath": "projects/team/sprints/",
-    "defaultTag": "Team"
+    "wikiBasePath": "projects/team/sprints/"
   },
   "owner_sprint_tags": {
     "@alice": "Sprint Alice"
-  }
+  },
+  "publish_wiki": true,
+  "append_estimation_to_title": false
 }
 ```
 
@@ -256,6 +258,9 @@ starts a new visual root. An owner section uses `== @user : #sprint_user ==`
 when `owner_sprint_tags` configures that user's exact personal sprint tag. The
 hashtag lowercases the configured name and replaces spaces with `_`; otherwise
 it uses `== @user ==`.
+The first nonblank line after the sprint title can optionally contain
+`dd/mm/yyyy-dd/mm/yyyy`. The start is inclusive, the end is exclusive, and
+the generated wiki reports Monday-to-Friday duration before the owner tables.
 
 ### Security Notes
 
@@ -490,12 +495,13 @@ usar `pha_task_start`, permite estos metodos Conduit internos:
 ```
 
 `phorge_preview_sprint` valida y resuelve una definicion de sprint ya cargada
-sin escrituras y devuelve un id de preview de un solo uso, metadatos de wiki y
-Remarkup. Si la preview informa de una wiki existente, el cliente debe advertir
-y obtener confirmacion explicita antes de llamar a `phorge_create_sprint`, que
-reemplaza el documento completo. El cliente proporciona la
-configuracion editable de proyecto y tags por owner; el MCP no lee archivos
-internos de Skills de OpenCode.
+sin escrituras. Con `publish_wiki: false` procesa solo tareas: no llama a
+Phriction ni requiere `project_config`. Con `publish_wiki` activo devuelve un
+id de preview de un solo uso, metadatos de wiki y Remarkup. Si la preview
+informa de una wiki existente, el cliente debe advertir y obtener confirmacion
+explicita antes de llamar a `phorge_create_sprint`, que reemplaza el documento
+completo. El cliente proporciona la configuracion editable de proyecto y tags
+por owner; el MCP no lee archivos internos de Skills de OpenCode.
 
 ```json
 {
@@ -503,12 +509,13 @@ internos de Skills de OpenCode.
   "source_text": "# Sprint 17\nCrear login;;@alice;High;Backend[Doing]",
   "project_config": {
     "name": "Equipo",
-    "wikiBasePath": "projects/equipo/sprints/",
-    "defaultTag": "Equipo"
+    "wikiBasePath": "projects/equipo/sprints/"
   },
   "owner_sprint_tags": {
     "@alice": "Sprint Alice"
-  }
+  },
+  "publish_wiki": true,
+  "append_estimation_to_title": false
 }
 ```
 
@@ -544,6 +551,9 @@ comienza una nueva raiz visual. La seccion de un owner usa
 `== @usuario : #sprint_usuario ==` si `owner_sprint_tags` configura su tag de
 sprint personal exacto. El hashtag pasa el nombre configurado a minusculas y
 sustituye espacios por `_`; si no hay mapping, usa `== @usuario ==`.
+La primera linea no vacia posterior al titulo puede contener opcionalmente
+`dd/mm/aaaa-dd/mm/aaaa`. El inicio es inclusivo, el fin exclusivo y la wiki
+generada informa la duracion de lunes a viernes antes de las tablas por owner.
 
 ### Notas De Seguridad
 

@@ -36,7 +36,6 @@ class SprintWorkflowTest(unittest.TestCase):
         self.config = {
             "name": "Demo",
             "wikiBasePath": "teams/demo",
-            "defaultTag": "Demo",
         }
         self.tags = {"@ana": "Sprint Ana", "@bob": "Sprint Bob"}
         self.client.maniphest.get_priority_info.return_value = {
@@ -63,8 +62,14 @@ class SprintWorkflowTest(unittest.TestCase):
 
         self.client.maniphest.edit_task.side_effect = edit
 
-    def _create(self, source_path, source_text, config, tags):
-        preview = self.preview(source_path, source_text, config, tags)
+    def _create(
+        self, source_path, source_text, config, tags, publish_wiki=True,
+        append_estimation_to_title=False,
+    ):
+        preview = self.preview(
+            source_path, source_text, config, tags, publish_wiki,
+            append_estimation_to_title,
+        )
         if not preview.get("success"):
             return preview
         return self.apply_preview(preview["previewId"])
@@ -123,7 +128,7 @@ class SprintWorkflowTest(unittest.TestCase):
         self.assertEqual(tx[3]["value"], "normal")
         self.assertEqual(
             tx[4]["value"],
-            ["PHID-PROJ-Demo", "PHID-PROJ-Sprint-Ana"],
+            ["PHID-PROJ-Sprint-Ana"],
         )
         self.assertEqual(len(result["created"]), 1)
         content = self.client.phriction.create_document.call_args.kwargs["content"]
@@ -138,6 +143,41 @@ class SprintWorkflowTest(unittest.TestCase):
         content = self.client.phriction.create_document.call_args.kwargs["content"]
         self.assertIn("<td>1.5h</td>", content)
 
+    def test_titles_can_append_estimations_for_new_and_existing_tasks(self):
+        result = self.create(
+            "one.txt", "# Sprint 1\nBuild;1D;@ana", self.config, self.tags,
+            append_estimation_to_title=True,
+        )
+
+        self.assertTrue(result["success"])
+        transactions = self.client.maniphest.edit_task.call_args.kwargs["transactions"]
+        self.assertEqual(transactions[0], {"type": "title", "value": "Build [1D]"})
+
+        self.client.reset_mock()
+        self.client.maniphest.search_tasks.return_value = page([self._existing_task(7)])
+        result = self.create(
+            "one.txt", "# Sprint 1\nT7;1.5h", self.config, self.tags,
+            append_estimation_to_title=True,
+        )
+
+        self.assertTrue(result["success"])
+        transactions = self.client.maniphest.edit_task.call_args.kwargs["transactions"]
+        self.assertEqual(transactions, [{"type": "title", "value": "Existing 7 [1.5h]"}])
+
+    def test_existing_title_replaces_an_estimation_suffix(self):
+        task = self._existing_task(7)
+        task["fields"]["name"] = "Existing [2h]"
+        self.client.maniphest.search_tasks.return_value = page([task])
+
+        result = self.create(
+            "one.txt", "# Sprint 1\nT7;1D", self.config, self.tags,
+            append_estimation_to_title=True,
+        )
+
+        self.assertTrue(result["success"])
+        transactions = self.client.maniphest.edit_task.call_args.kwargs["transactions"]
+        self.assertEqual(transactions, [{"type": "title", "value": "Existing [1D]"}])
+
     def test_new_task_uses_the_optional_description(self):
         result = self.create(
             "one.txt", "# Sprint 1\nBuild;;@ana;;;;Detailed work", self.config, self.tags
@@ -147,7 +187,7 @@ class SprintWorkflowTest(unittest.TestCase):
         transactions = self.client.maniphest.edit_task.call_args.kwargs["transactions"]
         self.assertEqual(transactions[1], {"type": "description", "value": "Detailed work"})
 
-    def test_new_task_without_explicit_tags_uses_default_and_owner_sprint_tag(self):
+    def test_new_task_without_explicit_tags_uses_owner_sprint_tag(self):
         result = self.create(
             "one.txt", "# Sprint 1\nBuild;;@ana", self.config, self.tags
         )
@@ -157,9 +197,9 @@ class SprintWorkflowTest(unittest.TestCase):
         projects = next(
             item["value"] for item in transactions if item["type"] == "projects.add"
         )
-        self.assertEqual(projects, ["PHID-PROJ-Demo", "PHID-PROJ-Sprint-Ana"])
+        self.assertEqual(projects, ["PHID-PROJ-Sprint-Ana"])
 
-    def test_new_task_explicit_tags_replace_default_but_keep_owner_sprint_tag(self):
+    def test_new_task_explicit_tags_keep_owner_sprint_tag(self):
         result = self.create(
             "one.txt", "# Sprint 1\nBuild;;@ana;;Core,Ops", self.config, self.tags
         )
@@ -339,7 +379,7 @@ class SprintWorkflowTest(unittest.TestCase):
             (
                 "one.txt",
                 "# Sprint 1\nBuild;;@ana",
-                {"name": "<CONFIGURAR>", "wikiBasePath": "x", "defaultTag": "Demo"},
+                {"name": "<CONFIGURAR>", "wikiBasePath": "x"},
                 self.tags,
             ),
             (
@@ -348,7 +388,6 @@ class SprintWorkflowTest(unittest.TestCase):
                 {
                     "name": "Demo",
                     "wikiBasePath": "/teams/demo/",
-                    "defaultTag": "Demo",
                 },
                 self.tags,
             ),
@@ -375,9 +414,10 @@ class SprintWorkflowTest(unittest.TestCase):
         self.assertTrue(result["success"])
         self.client.phriction.edit_document.assert_called_once()
 
-    def test_missing_owner_sprint_tag_uses_default_tag_and_warns(self):
+    def test_tasks_only_applies_personal_and_explicit_tags_without_a_wiki(self):
         result = self.create(
-            "one.txt", "# Sprint 1\nBuild;;@ana;;Demo", self.config, {"@bob": "Sprint Bob"}
+            "one.txt", "# Sprint 1\nBuild;;@ana;;Core", None, self.tags,
+            publish_wiki=False,
         )
 
         self.assertTrue(result["success"])
@@ -385,11 +425,31 @@ class SprintWorkflowTest(unittest.TestCase):
         projects = next(
             item["value"] for item in transactions if item["type"] == "projects.add"
         )
-        self.assertEqual(projects, ["PHID-PROJ-Demo"])
-        self.assertEqual(
-            result["warnings"],
-            ['No hay un proyecto personal de sprint configurado para @ana. Se ha utilizado el tag por defecto "Demo".'],
+        self.assertEqual(projects, ["PHID-PROJ-Core", "PHID-PROJ-Sprint-Ana"])
+        self.assertFalse(result["publishedWiki"])
+        self.client.phriction.get_document_info.assert_not_called()
+        self.client.phriction.create_document.assert_not_called()
+
+    def test_tasks_only_reassignment_without_personal_tag_keeps_projects(self):
+        self.client.maniphest.search_tasks.return_value = page([self._existing_task(7)])
+
+        result = self.create(
+            "one.txt", "# Sprint 1\nT7;;@ana", None, {}, publish_wiki=False
         )
+
+        self.assertTrue(result["success"])
+        transactions = self.client.maniphest.edit_task.call_args.kwargs["transactions"]
+        self.assertEqual(transactions, [{"type": "owner", "value": "PHID-USER-ana"}])
+
+    def test_missing_owner_sprint_tag_creates_without_automatic_projects(self):
+        result = self.create(
+            "one.txt", "# Sprint 1\nBuild;;@ana", self.config, {"@bob": "Sprint Bob"}
+        )
+
+        self.assertTrue(result["success"])
+        transactions = self.client.maniphest.edit_task.call_args.kwargs["transactions"]
+        self.assertNotIn("projects.add", [item["type"] for item in transactions])
+        self.assertEqual(result["warnings"], [])
 
     def test_missing_referenced_task_is_a_zero_write_precheck(self):
         result = self.create("one.txt", "# Sprint 1\nT404", self.config, self.tags)
@@ -409,7 +469,7 @@ class SprintWorkflowTest(unittest.TestCase):
         )
 
     def test_configuration_rejects_phids_before_reads_or_writes(self):
-        config = dict(self.config, defaultTag="PHID-PROJ-not-configuration")
+        config = dict(self.config, name="PHID-PROJ-not-configuration")
 
         result = self.create("one.txt", "# Sprint 1\nBuild;;@ana", config, self.tags)
 

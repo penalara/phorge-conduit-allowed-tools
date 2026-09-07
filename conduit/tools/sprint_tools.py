@@ -19,9 +19,10 @@ from conduit.tools.sprint_definition import (
     render_sprint_remarkup,
 )
 
-_CONFIG_KEYS = {"name", "wikiBasePath", "defaultTag"}
+_CONFIG_KEYS = {"name", "wikiBasePath"}
 _USERNAME = re.compile(r"^@[A-Za-z0-9._-]+$")
 _PHID = re.compile(r"\bPHID-[A-Z]+-[A-Za-z0-9]+\b", re.IGNORECASE)
+_ESTIMATION_SUFFIX = re.compile(r"\s\[(?:[0-9]+(?:\.[0-9]+)?)[hD]\]$")
 _PLACEHOLDER = "<CONFIGURAR>"
 _DESCRIPTION = "Pendiente especificación tras crear con IA"
 
@@ -110,6 +111,12 @@ def _task_attachment(task: Dict[str, Any], name: str, key: str) -> List[str]:
     return value if isinstance(value, list) else []
 
 
+def _title_with_estimation(title: str, estimation: Optional[str], enabled: bool) -> str:
+    if not enabled or not estimation:
+        return title
+    return _ESTIMATION_SUFFIX.sub("", title) + " [{}]".format(estimation)
+
+
 def _structured_error(code: str, message: str) -> dict:
     return {"success": False, "ok": False, "phase": "precheck", "error_code": code,
             "error": message, "errors": [{"line": 0, "code": code, "message": message}],
@@ -123,8 +130,10 @@ def _execute_sprint(plan: Dict[str, Any]) -> dict:
     projects, columns = plan["projects"], plan["columns"]
     config = plan["project_config"]
     owner_sprint_tags = plan["owner_sprint_tags"]
+    publish_wiki = plan["publish_wiki"]
+    append_estimation_to_title = plan["append_estimation_to_title"]
     records: List[Dict[str, Any]] = []
-    warnings = plan["warnings"]
+    warnings: List[str] = []
 
     def write_failure(
         error: PhabricatorAPIError,
@@ -153,29 +162,42 @@ def _execute_sprint(plan: Dict[str, Any]) -> dict:
             "pendingTasks": [row.line_number for row in pending_rows],
             "tasks": records,
             "warnings": warnings,
+            "publishedWiki": False,
             **_record_groups(records),
         }
 
     for row in definition.rows:
         explicit = [item.name for item in row.projects]
-        sprint_tag = (
-            owner_sprint_tags.get("@" + row.owner, config["defaultTag"])
-            if row.owner
-            else ""
-        )
-        names = (explicit or [config["defaultTag"]]) if row.title is not None else explicit
+        sprint_tag = owner_sprint_tags.get("@" + row.owner, "") if row.owner else ""
+        names = list(explicit)
         if row.owner and sprint_tag:
             names = _unique(names + [sprint_tag])
         project_data = [projects[name] for name in names]
         column_data = [columns[(item.name, item.column)] for item in row.projects if item.column]
         transactions: List[Dict[str, Any]] = []
         if row.title is not None:
-            transactions += [ManiphestClient.create_title_transaction(row.title), ManiphestClient.create_description_transaction(row.description or _DESCRIPTION), ManiphestClient.create_owner_transaction(users[row.owner]), ManiphestClient.create_priority_transaction(priorities[row.priority or "Normal"]), ManiphestClient.create_projects_add_transaction([item["phid"] for item in project_data])]
+            title = _title_with_estimation(
+                row.title, row.estimation, append_estimation_to_title
+            )
+            row.title = title
+            transactions += [ManiphestClient.create_title_transaction(title), ManiphestClient.create_description_transaction(row.description or _DESCRIPTION), ManiphestClient.create_owner_transaction(users[row.owner]), ManiphestClient.create_priority_transaction(priorities[row.priority or "Normal"])]
+            if project_data:
+                transactions.append(
+                    ManiphestClient.create_projects_add_transaction(
+                        [item["phid"] for item in project_data]
+                    )
+                )
         else:
+            updated_title = _title_with_estimation(
+                row.existing_title or "", row.estimation, append_estimation_to_title
+            )
+            if updated_title != row.existing_title:
+                transactions.append(ManiphestClient.create_title_transaction(updated_title))
+                row.existing_title = updated_title
             if row.owner: transactions.append(ManiphestClient.create_owner_transaction(users[row.owner]))
             if row.priority: transactions.append(ManiphestClient.create_priority_transaction(priorities[row.priority]))
             if row.projects: transactions.append(ManiphestClient.create_projects_set_transaction([item["phid"] for item in project_data]))
-            elif row.owner: transactions.append(ManiphestClient.create_projects_add_transaction([item["phid"] for item in project_data]))
+            elif row.owner and project_data: transactions.append(ManiphestClient.create_projects_add_transaction([item["phid"] for item in project_data]))
         if row.subscribers: transactions.append(ManiphestClient.create_subscribers_set_transaction(_unique([users[name] for name in row.subscribers])))
         if row.parent_row_index is not None:
             parent = definition.rows[row.parent_row_index]
@@ -196,7 +218,13 @@ def _execute_sprint(plan: Dict[str, Any]) -> dict:
             row.final_task_identifier = "T%d" % task_id
             setattr(row, "_task_phid", task_phid)
         records.append({"line": row.line_number, "task": row.final_task_identifier, "title": row.existing_title or row.title, "status": "created" if row.title is not None else ("updated" if transactions else "unchanged"), "projects": project_data, "columns": column_data})
-    content = render_sprint_remarkup(definition, owner_sprint_tags=owner_sprint_tags)
+    if not publish_wiki:
+        return {"success": True, "ok": True, "sourcePath": plan["source_path"], "sprint": definition.name, "title": definition.name, "project": None, "wiki": None, "publishedWiki": False, "tasks": records, **_record_groups(records), "warnings": warnings}
+    content = render_sprint_remarkup(
+        definition,
+        owner_sprint_tags=owner_sprint_tags,
+        append_estimation_to_title=append_estimation_to_title,
+    )
     try:
         if plan["wiki_exists"]:
             wiki = client.phriction.edit_document(path=plan["wiki_path"], title=definition.name, content=content)
@@ -210,7 +238,7 @@ def _execute_sprint(plan: Dict[str, Any]) -> dict:
             {"operation": "editWiki" if plan["wiki_exists"] else "createWiki"},
             [],
         )
-    return {"success": True, "ok": True, "sourcePath": plan["source_path"], "sprint": definition.name, "title": definition.name, "project": config, "wiki": {"path": plan["wiki_path"], "title": definition.name, "result": wiki}, "tasks": records, **_record_groups(records), "warnings": warnings}
+    return {"success": True, "ok": True, "sourcePath": plan["source_path"], "sprint": definition.name, "title": definition.name, "project": config, "wiki": {"path": plan["wiki_path"], "title": definition.name, "result": wiki}, "publishedWiki": True, "tasks": records, **_record_groups(records), "warnings": warnings}
 
 
 def register_sprint_tools(
@@ -224,8 +252,10 @@ def register_sprint_tools(
     def _prepare_sprint(
         source_path: str,
         source_text: str,
-        project_config: Dict[str, str],
-        owner_sprint_tags: Dict[str, str],
+        project_config: Optional[Dict[str, str]],
+        owner_sprint_tags: Optional[Dict[str, str]],
+        publish_wiki: bool,
+        append_estimation_to_title: bool,
     ) -> dict:
         """Create a complete Phorge sprint from already-loaded Markdown.
 
@@ -248,14 +278,20 @@ def register_sprint_tools(
                     "source_path must be relative and cannot contain '..'",
                 )
 
-        if not isinstance(project_config, dict) or set(project_config) != _CONFIG_KEYS:
+        if not isinstance(publish_wiki, bool):
+            _error(errors, 0, "INVALID_PUBLISH_WIKI", "publish_wiki must be a boolean")
+        if not isinstance(append_estimation_to_title, bool):
+            _error(errors, 0, "INVALID_APPEND_ESTIMATION", "append_estimation_to_title must be a boolean")
+        if publish_wiki and (
+            not isinstance(project_config, dict) or set(project_config) != _CONFIG_KEYS
+        ):
             _error(
                 errors,
                 0,
                 "INVALID_PROJECT_CONFIG",
-                "project_config must contain exactly name, wikiBasePath, and defaultTag",
+                "project_config must contain exactly name and wikiBasePath",
             )
-        else:
+        elif publish_wiki:
             for key in sorted(_CONFIG_KEYS):
                 value = project_config.get(key)
                 if (
@@ -284,7 +320,16 @@ def register_sprint_tools(
                         "INVALID_WIKI_BASE_PATH",
                         "wikiBasePath must be a relative Phriction path",
                     )
+        elif project_config is not None:
+            _error(
+                errors,
+                0,
+                "INVALID_PROJECT_CONFIG",
+                "project_config must be omitted when publish_wiki is false",
+            )
 
+        if owner_sprint_tags is None:
+            owner_sprint_tags = {}
         if not isinstance(owner_sprint_tags, dict):
             _error(errors, 0, "INVALID_OWNER_TAGS", "owner_sprint_tags must be a map")
         else:
@@ -502,20 +547,9 @@ def register_sprint_tools(
             else:
                 old_owners[phid] = username
 
-        warnings: List[str] = []
-        warned_owners = set()
         for row in definition.rows:
             if row.owner:
                 row.final_owner_username = row.owner
-                owner_key = "@" + row.owner
-                if owner_key not in owner_sprint_tags and owner_key not in warned_owners:
-                    warnings.append(
-                        'No hay un proyecto personal de sprint configurado para {}. '
-                        'Se ha utilizado el tag por defecto "{}".'.format(
-                            owner_key, project_config["defaultTag"]
-                        )
-                    )
-                    warned_owners.add(owner_key)
             else:
                 row.final_owner_username = old_owners.get(
                     getattr(row, "_existing_owner_phid", None)
@@ -562,12 +596,8 @@ def register_sprint_tools(
         project_names: List[str] = []
         for row in definition.rows:
             project_names.extend(project.name for project in row.projects)
-            if row.title is not None and not row.projects:
-                project_names.append(project_config["defaultTag"])
-            if row.owner:
-                project_names.append(
-                    owner_sprint_tags.get("@" + row.owner, project_config["defaultTag"])
-                )
+            if row.owner and owner_sprint_tags.get("@" + row.owner):
+                project_names.append(owner_sprint_tags["@" + row.owner])
         projects: Dict[str, Dict[str, Any]] = {}
         for name in _unique([name for name in project_names if name]):
             found = read_all_pages(
@@ -584,16 +614,9 @@ def register_sprint_tools(
                     for row in definition.rows
                     if name in [project.name for project in row.projects]
                     or (
-                        row.title is not None
-                        and name == project_config["defaultTag"]
-                        and not row.projects
-                    )
-                    or (
                         row.owner
                         and name
-                        == owner_sprint_tags.get(
-                            "@" + row.owner, project_config["defaultTag"]
-                        )
+                        == owner_sprint_tags.get("@" + row.owner)
                     )
                 ] or [0]
                 for line in lines:
@@ -635,40 +658,64 @@ def register_sprint_tools(
                         "phid": phid,
                     }
 
-        base = project_config["wikiBasePath"].strip("/")
-        wiki_path = f"{base}/{definition.slug}/" if base else f"{definition.slug}/"
-        wiki_exists = bool(client.phriction.get_document_info(wiki_path))
+        wiki_path = None
+        wiki_exists = False
+        if publish_wiki:
+            base = project_config["wikiBasePath"].strip("/")
+            wiki_path = f"{base}/{definition.slug}/" if base else f"{definition.slug}/"
+            wiki_exists = bool(client.phriction.get_document_info(wiki_path))
         if errors:
             return _validation(errors)
         return {
             "definition": definition, "client": client, "users": users,
             "priorities": priorities, "projects": projects, "columns": columns,
-            "source_path": source_path, "project_config": dict(project_config),
+            "source_path": source_path,
+            "project_config": dict(project_config) if project_config else None,
             "owner_sprint_tags": dict(owner_sprint_tags),
-            "warnings": warnings,
+            "publish_wiki": publish_wiki,
+            "append_estimation_to_title": append_estimation_to_title,
             "wiki_path": wiki_path, "wiki_exists": wiki_exists,
         }
 
     @mcp.tool()
     @handle_api_errors
-    def phorge_preview_sprint(source_path: str, source_text: str,
-                               project_config: Dict[str, str], owner_sprint_tags: Dict[str, str]) -> dict:
+    def phorge_preview_sprint(
+        source_path: str,
+        source_text: str,
+        project_config: Optional[Dict[str, str]] = None,
+        owner_sprint_tags: Optional[Dict[str, str]] = None,
+        publish_wiki: bool = True,
+        append_estimation_to_title: bool = False,
+    ) -> dict:
         """Validate and resolve a sprint without creating or updating anything."""
-        prepared = _prepare_sprint(source_path, source_text, project_config, owner_sprint_tags)
+        prepared = _prepare_sprint(
+            source_path,
+            source_text,
+            project_config,
+            owner_sprint_tags,
+            publish_wiki,
+            append_estimation_to_title,
+        )
         if "success" in prepared:
             return prepared
         preview_id = secrets.token_urlsafe(24)
         with previews_lock:
             previews[preview_id] = prepared
         definition = prepared["definition"]
-        return {
+        result = {
             "success": True, "ok": True, "previewId": preview_id,
-            "wiki": {"path": prepared["wiki_path"], "title": definition.name,
-                      "exists": prepared["wiki_exists"]},
-            "remarkup": render_sprint_remarkup(
-                definition, preview=True, owner_sprint_tags=prepared["owner_sprint_tags"]
-            ),
+            "publishWiki": publish_wiki,
         }
+        if publish_wiki:
+            result["wiki"] = {"path": prepared["wiki_path"], "title": definition.name,
+                              "exists": prepared["wiki_exists"]}
+            result["remarkup"] = render_sprint_remarkup(
+                definition,
+                preview=True,
+                owner_sprint_tags=prepared["owner_sprint_tags"],
+                append_estimation_to_title=append_estimation_to_title,
+            )
+        return result
 
     @mcp.tool()
     @handle_api_errors

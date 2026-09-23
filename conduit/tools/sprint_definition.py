@@ -218,23 +218,30 @@ def _parse_date_range(
     return start_date, end_date, _workdays(start_date, end_date)
 
 
-def parse_sprint_definition(text: str) -> SprintDefinition:
+def parse_sprint_definition(
+    text: str,
+    require_header: bool = True,
+    require_owner_for_new_tasks: bool = True,
+) -> SprintDefinition:
     """Parse ``text`` without raising for user input errors.
 
-    Blank lines are ignored, including before the header. Every nonblank task
-    row is retained so callers can show all errors at once and row indexes
-    remain stable.
+    Blank lines are ignored. By default, input requires a sprint header and an
+    owner for each new task. Task-only callers can disable both requirements.
+    Every nonblank task row is retained so callers can show all errors at once
+    and row indexes remain stable.
     """
 
     lines = text.splitlines()
     errors: List[SprintParseError] = []
-    header_index = next(
-        (index for index, line in enumerate(lines) if line.strip()), None
+    header_index = (
+        next((index for index, line in enumerate(lines) if line.strip()), None)
+        if require_header
+        else None
     )
     name = None
-    if header_index is None:
+    if require_header and header_index is None:
         errors.append(SprintParseError(1, "Missing sprint header"))
-    else:
+    elif require_header:
         header_line_number = header_index + 1
         header = _HEADER_RE.fullmatch(lines[header_index])
         if header:
@@ -255,12 +262,14 @@ def parse_sprint_definition(text: str) -> SprintDefinition:
     rows: List[SprintTaskRow] = []
     levels: Dict[int, int] = {}
     previous_level = 0
-    start = (header_index + 1) if header_index is not None else len(lines)
+    start = (header_index + 1) if header_index is not None else 0
     start_date = None
     end_date = None
     workdays = None
-    date_line_index = next(
-        (index for index in range(start, len(lines)) if lines[index].strip()), None
+    date_line_index = (
+        next((index for index in range(start, len(lines)) if lines[index].strip()), None)
+        if require_header
+        else None
     )
     if date_line_index is not None:
         date_value = lines[date_line_index].strip()
@@ -272,6 +281,23 @@ def parse_sprint_definition(text: str) -> SprintDefinition:
     for line_number, physical_line in enumerate(lines[start:], start=start + 1):
         if not physical_line.strip():
             continue
+
+        if not require_header:
+            stripped_line = physical_line.strip()
+            if _HEADER_RE.fullmatch(physical_line):
+                errors.append(
+                    SprintParseError(
+                        line_number,
+                        "Task-only input cannot include a sprint header",
+                    )
+                )
+            if _DATE_RANGE_RE.fullmatch(stripped_line):
+                errors.append(
+                    SprintParseError(
+                        line_number,
+                        "Task-only input cannot include a sprint date range",
+                    )
+                )
 
         prefix_match = re.match(r"^[ \t]*", physical_line)
         prefix = prefix_match.group(0) if prefix_match else ""
@@ -328,7 +354,12 @@ def parse_sprint_definition(text: str) -> SprintDefinition:
             estimation_value, line_number, errors
         )
         owner = _parse_user(owner_value, "Owner", line_number, errors)
-        if title is not None and owner is None and not owner_value:
+        if (
+            require_owner_for_new_tasks
+            and title is not None
+            and owner is None
+            and not owner_value
+        ):
             errors.append(
                 SprintParseError(line_number, "Owner is required for a new task")
             )

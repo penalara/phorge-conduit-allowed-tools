@@ -253,6 +253,18 @@ owner-tag configuration; the MCP server does not read OpenCode skill files.
 }
 ```
 
+`phorge_preview_tasks` validates task rows without a sprint title, date range,
+Phriction document, or automatic personal sprint tags. New tasks may omit an
+owner. Call `phorge_create_tasks` with the single-use preview id to apply the
+validated changes.
+
+```json
+{
+  "source_path": "tasks.txt",
+  "source_text": "Create report;;;;Core\n    Create tests"
+}
+```
+
 `wikiBasePath` must be a safe relative Phriction path. Call preview first;
 `phorge_create_sprint` accepts only `preview_id`. Priorities must use the
 exact English visible name returned by Phorge, such as `High`, `Normal`, or
@@ -570,6 +582,18 @@ por owner; el MCP no lee archivos internos de Skills de OpenCode.
   },
   "publish_wiki": true,
   "append_estimation_to_title": false
+}
+```
+
+`phorge_preview_tasks` valida filas de tareas sin titulo ni fechas de sprint,
+documento Phriction ni tags personales de sprint automaticos. Las tareas
+nuevas pueden omitir owner. Para aplicar los cambios validados, llama a
+`phorge_create_tasks` con el id de preview de un solo uso.
+
+```json
+{
+  "source_path": "tareas.txt",
+  "source_text": "Crear informe;;;;Core\n    Crear tests"
 }
 ```
 

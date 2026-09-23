@@ -38,6 +38,30 @@ def test_header_must_be_the_first_nonblank_line():
     assert "First nonblank line" in result.errors[0].message
 
 
+def test_task_only_mode_has_no_header_or_owner_requirement():
+    result = parse_sprint_definition(
+        "Create report;;;;Core\n    Create child",
+        require_header=False,
+        require_owner_for_new_tasks=False,
+    )
+
+    assert result.is_valid
+    assert result.name is None
+    assert [row.owner for row in result.rows] == [None, None]
+    assert [row.parent_row_index for row in result.rows] == [None, 0]
+
+
+def test_task_only_mode_rejects_sprint_headers_and_dates():
+    result = parse_sprint_definition(
+        "# Sprint 1\n01/02/2026-13/02/2026\nCreate report",
+        require_header=False,
+        require_owner_for_new_tasks=False,
+    )
+
+    assert not result.is_valid
+    assert [error.line_number for error in result.errors] == [1, 2]
+
+
 @pytest.mark.parametrize(
     "header", ["#  Sprint 17", "#\tSprint 17", "## Sprint 17"]
 )

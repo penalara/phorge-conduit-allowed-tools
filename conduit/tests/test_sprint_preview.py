@@ -27,6 +27,8 @@ class SprintPreviewTest(unittest.TestCase):
         register_sprint_tools(mcp, lambda: self.client)
         self.preview = mcp.tools["phorge_preview_sprint"]
         self.create = mcp.tools["phorge_create_sprint"]
+        self.preview_tasks = mcp.tools["phorge_preview_tasks"]
+        self.create_tasks = mcp.tools["phorge_create_tasks"]
         self.config = {"name": "Demo", "wikiBasePath": "teams/demo"}
         self.tags = {"@ana": "Sprint Ana"}
         self.client.maniphest.get_priority_info.return_value = {
@@ -109,6 +111,73 @@ class SprintPreviewTest(unittest.TestCase):
         self.assertFalse(result["publishedWiki"])
         self.client.phriction.create_document.assert_not_called()
         self.client.phriction.edit_document.assert_not_called()
+
+    def test_task_only_mode_creates_an_unassigned_task_without_sprint_tags(self):
+        preview = self.preview_tasks("tasks.txt", "Build;;;;Core")
+
+        self.assertTrue(preview["success"])
+        result = self.create_tasks(preview["previewId"])
+
+        self.assertTrue(result["success"])
+        transactions = self.client.maniphest.edit_task.call_args.kwargs["transactions"]
+        self.assertEqual(
+            [transaction["type"] for transaction in transactions],
+            ["title", "description", "priority", "projects.add"],
+        )
+        self.assertEqual(
+            transactions[-1]["value"], ["PHID-PROJ-Core"]
+        )
+        self.client.phriction.get_document_info.assert_not_called()
+
+    def test_task_only_mode_allows_an_unchanged_unassigned_existing_task(self):
+        self.client.maniphest.search_tasks.return_value = page(
+            [
+                {
+                    "id": 7,
+                    "phid": "PHID-TASK-7",
+                    "fields": {"name": "Unassigned", "ownerPHID": None},
+                    "attachments": {},
+                }
+            ]
+        )
+        preview = self.preview_tasks("tasks.txt", "T7")
+
+        self.assertTrue(preview["success"])
+        result = self.create_tasks(preview["previewId"])
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["unchanged"][0]["task"], "T7")
+        self.client.maniphest.edit_task.assert_not_called()
+
+    def test_task_only_mode_applies_explicit_columns_and_hierarchy(self):
+        self.client.project.search_columns.return_value = page(
+            [{"phid": "PHID-PCOL-doing", "fields": {"name": "Doing"}}]
+        )
+        preview = self.preview_tasks(
+            "tasks.txt",
+            "Parent;;;;Core[Doing]\n    Child;;;;Core[Doing]",
+        )
+
+        self.assertTrue(preview["success"])
+        result = self.create_tasks(preview["previewId"])
+
+        self.assertTrue(result["success"])
+        child_transactions = self.client.maniphest.edit_task.call_args_list[1].kwargs[
+            "transactions"
+        ]
+        self.assertIn({"type": "parent", "value": "PHID-TASK-101"}, child_transactions)
+        self.assertIn(
+            {"type": "column", "value": ["PHID-PCOL-doing"]},
+            child_transactions,
+        )
+
+    def test_task_only_mode_rejects_a_sprint_header_before_reads_or_writes(self):
+        result = self.preview_tasks("tasks.txt", "# Sprint 1\nBuild")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["phase"], "precheck")
+        self.client.maniphest.search_tasks.assert_not_called()
+        self.client.maniphest.edit_task.assert_not_called()
 
 
 if __name__ == "__main__":

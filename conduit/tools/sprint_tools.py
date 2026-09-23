@@ -180,7 +180,21 @@ def _execute_sprint(plan: Dict[str, Any]) -> dict:
                 row.title, row.estimation, append_estimation_to_title
             )
             row.title = title
-            transactions += [ManiphestClient.create_title_transaction(title), ManiphestClient.create_description_transaction(row.description or _DESCRIPTION), ManiphestClient.create_owner_transaction(users[row.owner]), ManiphestClient.create_priority_transaction(priorities[row.priority or "Normal"])]
+            transactions += [
+                ManiphestClient.create_title_transaction(title),
+                ManiphestClient.create_description_transaction(
+                    row.description or _DESCRIPTION
+                ),
+            ]
+            if row.owner:
+                transactions.append(
+                    ManiphestClient.create_owner_transaction(users[row.owner])
+                )
+            transactions.append(
+                ManiphestClient.create_priority_transaction(
+                    priorities[row.priority or "Normal"]
+                )
+            )
             if project_data:
                 transactions.append(
                     ManiphestClient.create_projects_add_transaction(
@@ -256,6 +270,7 @@ def register_sprint_tools(
         owner_sprint_tags: Optional[Dict[str, str]],
         publish_wiki: bool,
         append_estimation_to_title: bool,
+        tasks_only: bool = False,
     ) -> dict:
         """Create a complete Phorge sprint from already-loaded Markdown.
 
@@ -282,6 +297,13 @@ def register_sprint_tools(
             _error(errors, 0, "INVALID_PUBLISH_WIKI", "publish_wiki must be a boolean")
         if not isinstance(append_estimation_to_title, bool):
             _error(errors, 0, "INVALID_APPEND_ESTIMATION", "append_estimation_to_title must be a boolean")
+        if tasks_only and publish_wiki:
+            _error(
+                errors,
+                0,
+                "INVALID_TASKS_ONLY_MODE",
+                "Task-only mode cannot publish a wiki",
+            )
         if publish_wiki and (
             not isinstance(project_config, dict) or set(project_config) != _CONFIG_KEYS
         ):
@@ -355,7 +377,9 @@ def register_sprint_tools(
                     )
 
         definition = parse_sprint_definition(
-            source_text if isinstance(source_text, str) else ""
+            source_text if isinstance(source_text, str) else "",
+            require_header=not tasks_only,
+            require_owner_for_new_tasks=not tasks_only,
         )
         for parse_error in definition.errors:
             _error(errors, parse_error.line_number, "PARSE_ERROR", parse_error.message)
@@ -363,7 +387,7 @@ def register_sprint_tools(
             _error(
                 errors, 1, "EMPTY_SPRINT", "Sprint must contain at least one task row"
             )
-        if not definition.slug:
+        if not tasks_only and not definition.slug:
             _error(errors, 1, "EMPTY_SLUG", "Sprint title must produce a nonempty slug")
         identifier_lines: Dict[str, List[int]] = {}
         for row in definition.rows:
@@ -465,7 +489,7 @@ def register_sprint_tools(
                 "_existing_columns",
                 _task_attachment(task, "columns", "columnPHIDs"),
             )  # noqa: B010
-            if row.owner is None and not owner_phid:
+            if not tasks_only and row.owner is None and not owner_phid:
                 _error(
                     errors,
                     row.line_number,
@@ -675,6 +699,7 @@ def register_sprint_tools(
             "publish_wiki": publish_wiki,
             "append_estimation_to_title": append_estimation_to_title,
             "wiki_path": wiki_path, "wiki_exists": wiki_exists,
+            "operation": "tasks" if tasks_only else "sprint",
         }
 
     @mcp.tool()
@@ -722,9 +747,67 @@ def register_sprint_tools(
     def phorge_create_sprint(preview_id: str) -> dict:
         """Apply one previously validated sprint preview."""
         with previews_lock:
-            prepared = previews.pop(preview_id, None)
+            prepared = previews.get(preview_id)
+            if prepared and prepared.get("operation") == "sprint":
+                previews.pop(preview_id)
         if prepared is None:
             return _structured_error("SPRINT_PREVIEW_NOT_FOUND", "Preview was not found or was already used")
+        if prepared.get("operation") != "sprint":
+            return _structured_error(
+                "INVALID_PREVIEW_OPERATION",
+                "Preview must be applied with phorge_create_tasks",
+            )
+        return _execute_sprint(prepared)
+
+    @mcp.tool()
+    @handle_api_errors
+    def phorge_preview_tasks(source_path: str, source_text: str) -> dict:
+        """Validate task-only input without creating or updating anything.
+
+        Unlike sprint input, task-only input has no title or date range and new
+        tasks may omit an owner. It never creates Phriction content or adds
+        automatic personal sprint tags.
+        """
+        prepared = _prepare_sprint(
+            source_path,
+            source_text,
+            None,
+            {},
+            False,
+            False,
+            tasks_only=True,
+        )
+        if "success" in prepared:
+            return prepared
+        preview_id = secrets.token_urlsafe(24)
+        with previews_lock:
+            previews[preview_id] = prepared
+        return {
+            "success": True,
+            "ok": True,
+            "previewId": preview_id,
+            "publishWiki": False,
+            "tasksOnly": True,
+        }
+
+    @mcp.tool()
+    @handle_api_errors
+    def phorge_create_tasks(preview_id: str) -> dict:
+        """Apply one previously validated task-only preview."""
+        with previews_lock:
+            prepared = previews.get(preview_id)
+            if prepared and prepared.get("operation") == "tasks":
+                previews.pop(preview_id)
+        if prepared is None:
+            return _structured_error(
+                "TASKS_PREVIEW_NOT_FOUND",
+                "Preview was not found or was already used",
+            )
+        if prepared.get("operation") != "tasks":
+            return _structured_error(
+                "INVALID_PREVIEW_OPERATION",
+                "Preview must be applied with phorge_create_sprint",
+            )
         return _execute_sprint(prepared)
 
 

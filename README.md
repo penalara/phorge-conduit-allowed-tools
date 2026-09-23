@@ -201,6 +201,33 @@ and performs one `maniphest.edit` only after completing its read precheck.
 }
 ```
 
+`pha_task_create_contingency` creates an assigned subtask directly in `En
+curso` under the unique backlog task whose title contains `contingencias`. It
+resolves the current user and the caller-provided exact personal sprint tag;
+it performs no write if the tag, required columns, or parent task are missing
+or ambiguous.
+
+```json
+{
+  "title": "Resolve access incident",
+  "sprint_tag": "Sprint Alice"
+}
+```
+
+To use this tool, allow these underlying Conduit methods:
+
+```json
+{
+  "allowed_tools": [
+    "user.whoami",
+    "project.search",
+    "project.column.search",
+    "maniphest.search",
+    "maniphest.edit"
+  ]
+}
+```
+
 `phorge_preview_sprint` validates and resolves an already-loaded sprint
 definition without writes. Set `publish_wiki` to `false` to process only tasks:
 that mode does not call Phriction and does not require `project_config`. With
@@ -489,6 +516,33 @@ usar `pha_task_start`, permite estos metodos Conduit internos:
     "maniphest.search",
     "project.search",
     "project.column.search",
+    "maniphest.edit"
+  ]
+}
+```
+
+`pha_task_create_contingency` crea una subtarea asignada directamente en `En
+curso`, bajo la tarea unica de backlog cuyo titulo contiene `contingencias`.
+Resuelve el usuario actual y el tag personal de sprint exacto que aporta quien
+la invoca; no escribe si falta o es ambiguo el tag, las columnas o la tarea
+padre.
+
+```json
+{
+  "title": "Resolver incidencia de acceso",
+  "sprint_tag": "Sprint Alice"
+}
+```
+
+Para usar esta tool, permite estos metodos Conduit internos:
+
+```json
+{
+  "allowed_tools": [
+    "user.whoami",
+    "project.search",
+    "project.column.search",
+    "maniphest.search",
     "maniphest.edit"
   ]
 }

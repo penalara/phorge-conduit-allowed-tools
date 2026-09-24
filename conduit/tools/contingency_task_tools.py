@@ -22,6 +22,12 @@ def _name(item: Dict[str, Any]) -> Optional[str]:
     return fields.get("name") if isinstance(fields, dict) else None
 
 
+def _is_open_task(task: Dict[str, Any]) -> bool:
+    fields = task.get("fields")
+    status = fields.get("status") if isinstance(fields, dict) else None
+    return isinstance(status, dict) and status.get("name") == "Open"
+
+
 def _visible_exact_column(
     columns: List[Dict[str, Any]],
     expected_name: str,
@@ -75,8 +81,8 @@ def register_contingency_task_tools(
 
         The tool resolves the supplied owner, their personal sprint tag, its
         visible ``Sprint Backlog`` and ``En curso`` columns, and exactly one
-        backlog task whose title contains ``contingencias``. It performs no
-        writes unless every precheck succeeds.
+        open backlog task whose title contains ``contingencias``. It performs
+        no writes unless every precheck succeeds.
 
         Args:
             title: Required title for the new contingency task.
@@ -204,6 +210,7 @@ def register_contingency_task_tools(
                 isinstance(task_title, str)
                 and isinstance(task_phid, str)
                 and isinstance(task_id, int)
+                and _is_open_task(task)
                 and _CONTINGENCY_TEXT in task_title.casefold()
             ):
                 parents.append(

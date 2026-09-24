@@ -202,10 +202,10 @@ and performs one `maniphest.edit` only after completing its read precheck.
 ```
 
 `pha_task_create_contingency` creates an assigned subtask directly in `En
-curso` under the unique backlog task whose title contains `contingencias`. It
-resolves the caller-provided owner and exact personal sprint tag; it performs
-no write if the owner, tag, required columns, or parent task are missing or
-ambiguous.
+curso` under the unique `Open` backlog task whose title contains
+`contingencias`. It resolves the caller-provided owner and exact personal
+sprint tag; it performs no write if the owner, tag, required columns, or
+parent task are missing or ambiguous.
 
 ```json
 {
@@ -535,10 +535,10 @@ usar `pha_task_start`, permite estos metodos Conduit internos:
 ```
 
 `pha_task_create_contingency` crea una subtarea asignada directamente en `En
-curso`, bajo la tarea unica de backlog cuyo titulo contiene `contingencias`.
-Resuelve el owner y el tag personal de sprint exacto que aporta quien la
-invoca; no escribe si falta o es ambiguo el owner, el tag, las columnas o la
-tarea padre.
+curso`, bajo la unica tarea de backlog con estado `Open` cuyo titulo contiene
+`contingencias`. Resuelve el owner y el tag personal de sprint exacto que
+aporta quien la invoca; no escribe si falta o es ambiguo el owner, el tag, las
+columnas o la tarea padre.
 
 ```json
 {

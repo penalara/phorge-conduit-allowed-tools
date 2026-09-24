@@ -50,7 +50,10 @@ class ContingencyTaskTest(unittest.TestCase):
                 {
                     "id": 12,
                     "phid": "PHID-TASK-parent",
-                    "fields": {"name": "Contingencias sprint"},
+                    "fields": {
+                        "name": "Contingencias sprint",
+                        "status": {"name": "Open"},
+                    },
                 }
             ]
         )
@@ -112,7 +115,10 @@ class ContingencyTaskTest(unittest.TestCase):
                 {
                     "id": 12,
                     "phid": "PHID-TASK-other",
-                    "fields": {"name": "Tarea normal"},
+                    "fields": {
+                        "name": "Tarea normal",
+                        "status": {"name": "Open"},
+                    },
                 }
             ]
         )
@@ -130,12 +136,18 @@ class ContingencyTaskTest(unittest.TestCase):
                 {
                     "id": 12,
                     "phid": "PHID-TASK-one",
-                    "fields": {"name": "Contingencias de acceso"},
+                    "fields": {
+                        "name": "Contingencias de acceso",
+                        "status": {"name": "Open"},
+                    },
                 },
                 {
                     "id": 14,
                     "phid": "PHID-TASK-two",
-                    "fields": {"name": "CONTINGENCIAS de red"},
+                    "fields": {
+                        "name": "CONTINGENCIAS de red",
+                        "status": {"name": "Open"},
+                    },
                 },
             ]
         )
@@ -156,6 +168,27 @@ class ContingencyTaskTest(unittest.TestCase):
         self.assertEqual(result["error_code"], "OWNER_NOT_FOUND")
         self.assertEqual(result["mutationsAttempted"], 0)
         self.client.project.search_projects.assert_not_called()
+        self.client.maniphest.edit_task.assert_not_called()
+
+    def test_closed_contingency_parent_is_ignored(self):
+        self.client.maniphest.search_tasks.return_value = page(
+            [
+                {
+                    "id": 12,
+                    "phid": "PHID-TASK-closed",
+                    "fields": {
+                        "name": "Contingencias resueltas",
+                        "status": {"name": "Resolved"},
+                    },
+                }
+            ]
+        )
+
+        result = self.create("Resolver incidencia", "ana", "Sprint Ana")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "CONTINGENCY_PARENT_NOT_FOUND")
+        self.assertEqual(result["mutationsAttempted"], 0)
         self.client.maniphest.edit_task.assert_not_called()
 
     def test_ambiguous_owner_aborts_before_a_write(self):

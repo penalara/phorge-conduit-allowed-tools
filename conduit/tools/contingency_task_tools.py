@@ -1,5 +1,6 @@
 """High-level workflow for creating sprint contingency tasks."""
 
+import re
 from typing import Any, Callable, Dict, List, Optional
 
 from fastmcp import FastMCP
@@ -13,6 +14,7 @@ from conduit.tools.pagination import read_all_pages
 _BACKLOG_COLUMN = "sprint backlog"
 _IN_PROGRESS_COLUMN = "en curso"
 _CONTINGENCY_TEXT = "contingencias"
+_USERNAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def _name(item: Dict[str, Any]) -> Optional[str]:
@@ -64,17 +66,22 @@ def register_contingency_task_tools(
 
     @mcp.tool()
     @handle_api_errors
-    def pha_task_create_contingency(title: str, sprint_tag: str) -> dict:
-        """Create an in-progress contingency subtask for the current user.
+    def pha_task_create_contingency(
+        title: str,
+        owner_username: str,
+        sprint_tag: str,
+    ) -> dict:
+        """Create an in-progress contingency subtask for a sprint owner.
 
-        The tool resolves the current user's personal sprint tag, its visible
-        ``Sprint Backlog`` and ``En curso`` columns, and exactly one backlog
-        task whose title contains ``contingencias``. It performs no writes
-        unless every precheck succeeds.
+        The tool resolves the supplied owner, their personal sprint tag, its
+        visible ``Sprint Backlog`` and ``En curso`` columns, and exactly one
+        backlog task whose title contains ``contingencias``. It performs no
+        writes unless every precheck succeeds.
 
         Args:
             title: Required title for the new contingency task.
-            sprint_tag: Exact visible name of the current user's sprint tag.
+            owner_username: Username without the leading @.
+            sprint_tag: Exact visible name of the owner's sprint tag.
 
         Returns:
             The created task and the resolved parent and workboard destination.
@@ -83,34 +90,44 @@ def register_contingency_task_tools(
             return _result_error(
                 "INVALID_TITLE", "title must be a nonempty string"
             )
+        if (
+            not isinstance(owner_username, str)
+            or not _USERNAME.fullmatch(owner_username)
+        ):
+            return _result_error(
+                "INVALID_OWNER", "owner_username must not include @"
+            )
         if not isinstance(sprint_tag, str) or not sprint_tag.strip():
             return _result_error(
                 "INVALID_SPRINT_TAG", "sprint_tag must be a nonempty string"
             )
 
         client = get_client_func()
-        current_user = client.user.whoami()
-        user_phid = (
-            current_user.get("phid")
-            if isinstance(current_user, dict)
-            else None
+        users = read_all_pages(
+            client.user.search,
+            "user.search",
+            constraints={"usernames": [owner_username]},
         )
-        user_fields = (
-            current_user.get("fields")
-            if isinstance(current_user, dict)
-            else None
-        )
-        username = (
-            current_user.get("username")
-            if isinstance(current_user, dict)
-            else None
-        ) or (
-            user_fields.get("username")
-            if isinstance(user_fields, dict)
-            else None
-        )
-        if not isinstance(user_phid, str) or not isinstance(username, str):
-            raise ValueError("user.whoami returned incomplete user data")
+        owner_matches = [
+            user
+            for user in users
+            if isinstance(user, dict)
+            and isinstance(user.get("phid"), str)
+            and isinstance(user.get("fields"), dict)
+            and user["fields"].get("username") == owner_username
+        ]
+        if not owner_matches:
+            return _result_error(
+                "OWNER_NOT_FOUND",
+                "Owner '{}' must resolve exactly once".format(owner_username),
+            )
+        if len(owner_matches) != 1:
+            return _result_error(
+                "AMBIGUOUS_OWNER",
+                "Owner '{}' resolved more than once".format(owner_username),
+            )
+        owner = owner_matches[0]
+        user_phid = owner["phid"]
 
         projects = read_all_pages(
             client.project.search_projects,
@@ -230,7 +247,7 @@ def register_contingency_task_tools(
                 "phid": obj.get("phid"),
                 "title": title.strip(),
             },
-            "owner": {"username": username, "phid": user_phid},
+            "owner": {"username": owner_username, "phid": user_phid},
             "sprintTag": {
                 "name": _name(sprint_project),
                 "phid": sprint_project_phid,
